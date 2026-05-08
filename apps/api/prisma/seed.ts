@@ -1,5 +1,5 @@
 /**
- * シードスクリプト — npm run dev 時に自動実行される
+ * シードスクリプト — 必要なときだけ npm run db:seed で実行する
  * 実行: npx ts-node --transpile-only prisma/seed.ts  (apps/api ディレクトリで)
  *
  * 作成するデータ（upsert なので何度実行しても安全）:
@@ -155,11 +155,11 @@ async function main() {
 
   // ── FAQ ───────────────────────────────────────────────────────────────
   const faqs = [
-    { id: "seed-faq-1", category: "予約", question: "予約はどのようにすればよいですか？", answer: "お電話またはウェブサイトからご予約いただけます。", priority: 1 },
-    { id: "seed-faq-2", category: "営業時間", question: "営業時間を教えてください。", answer: "平日9:00〜18:00、土曜10:00〜17:00です。日祝はお休みです。", priority: 2 },
-    { id: "seed-faq-3", category: "キャンセル", question: "キャンセルポリシーを教えてください。", answer: "前日までのキャンセルは無料です。当日キャンセルはキャンセル料が発生します。", priority: 3 },
-    { id: "seed-faq-4", category: "支払い", question: "支払い方法は何がありますか？", answer: "現金・クレジットカード・電子マネーがご利用いただけます。", priority: 4 },
-    { id: "seed-faq-5", category: "アクセス", question: "最寄り駅はどこですか？", answer: "○○駅から徒歩5分です。", priority: 5 },
+    { id: "seed-faq-1", category: "予約", question: "予約はどのようにすればよいですか？", answer: "お電話またはウェブサイトからご予約いただけます。" },
+    { id: "seed-faq-2", category: "営業時間", question: "営業時間を教えてください。", answer: "平日9:00〜18:00、土曜10:00〜17:00です。日祝はお休みです。" },
+    { id: "seed-faq-3", category: "キャンセル", question: "キャンセルポリシーを教えてください。", answer: "前日までのキャンセルは無料です。当日キャンセルはキャンセル料が発生します。" },
+    { id: "seed-faq-4", category: "支払い", question: "支払い方法は何がありますか？", answer: "現金・クレジットカード・電子マネーがご利用いただけます。" },
+    { id: "seed-faq-5", category: "アクセス", question: "最寄り駅はどこですか？", answer: "○○駅から徒歩5分です。" },
   ];
 
   for (const faq of faqs) {

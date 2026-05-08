@@ -82,7 +82,7 @@ export default function FaqsPage() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {["カテゴリ", "質問", "回答", "優先度", "有効", ""].map((h) => (
+                  {["カテゴリ", "質問", "回答", "有効", ""].map((h) => (
                     <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-6 py-3">{h}</th>
                   ))}
                 </tr>
@@ -98,9 +98,6 @@ export default function FaqsPage() {
                     </td>
                     <td className="px-6 py-4">
                       <p className="text-sm text-gray-500 max-w-sm truncate">{faq.answer}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="text-sm text-gray-600">{faq.priority}</span>
                     </td>
                     <td className="px-6 py-4">
                       <Switch checked={faq.isActive} onCheckedChange={() => toggleActive(faq.id, faq.isActive)} />

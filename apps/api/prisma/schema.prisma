@@ -146,6 +146,7 @@ model FAQ {
   category  String?
   question  String
   answer    String
+  // Legacy: UI/APIでは使用しない。既存DBの破壊的変更を避けるため残す。
   priority  Int      @default(0)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -156,7 +157,7 @@ model FAQ {
 }
 
 // ============================================================
-// Document (RAG用資料)
+// Document (AI回答用の参考資料)
 // ============================================================
 
 model Document {

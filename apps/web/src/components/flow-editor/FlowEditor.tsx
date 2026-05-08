@@ -22,6 +22,7 @@ import "reactflow/dist/style.css";
 import { Save, Undo2, Redo2, ZoomIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { callFlowsApi } from "@/lib/api/call-flows";
 import { NodePalette } from "./NodePalette";
 import { NodeConfigPanel } from "./NodeConfigPanel";
 import { initialNodes, initialEdges } from "./initialFlowData";
@@ -47,16 +48,54 @@ function newId() {
 }
 
 interface FlowEditorProps {
+  flowId: string;
   flowName: string;
   flowStatus: string;
+  initialFlowJson?: unknown;
+  onSaved?: (flowJson: object) => void;
 }
 
-export function FlowEditor({ flowName, flowStatus }: FlowEditorProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+function getInitialFlow(flowJson: unknown) {
+  if (
+    flowJson &&
+    typeof flowJson === "object" &&
+    "nodes" in flowJson &&
+    "edges" in flowJson &&
+    Array.isArray((flowJson as { nodes: unknown }).nodes) &&
+    Array.isArray((flowJson as { edges: unknown }).edges)
+  ) {
+    const parsed = flowJson as { nodes: Node<AnyNodeData>[]; edges: Edge[] };
+    return { nodes: parsed.nodes, edges: parsed.edges };
+  }
+
+  return { nodes: initialNodes, edges: initialEdges };
+}
+
+function syncNodeCounter(nodes: Node[]) {
+  const maxId = nodes.reduce((max, node) => {
+    const match = /^node-(\d+)$/.exec(node.id);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, nodeIdCounter);
+  nodeIdCounter = maxId;
+}
+
+export function FlowEditor({
+  flowId,
+  flowName,
+  flowStatus,
+  initialFlowJson,
+  onSaved,
+}: FlowEditorProps) {
+  const initialFlow = getInitialFlow(initialFlowJson);
+  syncNodeCounter(initialFlow.nodes);
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialFlow.nodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialFlow.edges);
   const [selectedNode, setSelectedNode] = useState<Node<AnyNodeData> | null>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [saved, setSaved] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   // ──────── connect
@@ -164,13 +203,22 @@ export function FlowEditor({ flowName, flowStatus }: FlowEditorProps) {
   );
 
   // ──────── save
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     if (!rfInstance) return;
     const flow = rfInstance.toObject();
-    console.log("Saving flow:", JSON.stringify(flow, null, 2));
-    // TODO: POST /api/call-flows/:id with flow JSON
-    setSaved(true);
-  }, [rfInstance]);
+    setSaving(true);
+    setSaveError(null);
+
+    try {
+      await callFlowsApi.update(flowId, { flowJson: flow });
+      setSaved(true);
+      onSaved?.(flow);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "保存に失敗しました");
+    } finally {
+      setSaving(false);
+    }
+  }, [flowId, onSaved, rfInstance]);
 
   return (
     <div className="flex h-full w-full">
@@ -250,12 +298,17 @@ export function FlowEditor({ flowName, flowStatus }: FlowEditorProps) {
                 size="sm"
                 onClick={handleSave}
                 className={saved ? "opacity-60" : ""}
-                disabled={saved}
+                disabled={saved || saving}
               >
                 <Save className="w-3.5 h-3.5 mr-1.5" />
-                {saved ? "保存済み" : "保存する"}
+                {saving ? "保存中..." : saved ? "保存済み" : "保存する"}
               </Button>
             </div>
+            {saveError && (
+              <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-md px-2 py-1">
+                {saveError}
+              </p>
+            )}
           </Panel>
 
           {/* Hint */}

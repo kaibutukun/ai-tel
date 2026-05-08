@@ -48,7 +48,7 @@ const PALETTE_ITEMS: PaletteItem[] = [
   },
   {
     type: "action",
-    label: "AI回答（RAG）",
+    label: "AI回答（資料検索）",
     description: "資料を参照してAI回答",
     icon: <Search className="w-4 h-4" />,
     color: "border-indigo-300 bg-indigo-50 text-indigo-700",

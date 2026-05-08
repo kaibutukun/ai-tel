@@ -46,10 +46,35 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function requestForm<T>(path: string, body: FormData): Promise<T> {
+  const token = getTokenFromCookie();
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body,
+  });
+
+  if (!res.ok) {
+    const responseBody = await res.json().catch(() => ({}));
+    const message = responseBody.error?.message ?? responseBody.message;
+    throw new Error(
+      Array.isArray(message)
+        ? message.join(", ")
+        : message ?? `API error: ${res.status}`
+    );
+  }
+
+  return res.json() as Promise<T>;
+}
+
 export const apiClient = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "POST", body: JSON.stringify(body) }),
+  postForm: <T>(path: string, body: FormData) => requestForm<T>(path, body),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),

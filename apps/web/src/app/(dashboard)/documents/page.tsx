@@ -6,8 +6,13 @@ import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { DocumentModal } from "@/components/documents/DocumentModal";
+import { aiApi, type AiSource } from "@/lib/api/ai";
 import { documentsApi, type Document } from "@/lib/api/documents";
 import { getCompanyId } from "@/lib/get-company-id";
+
+type DocumentType = "PDF" | "URL" | "TEXT";
 
 const typeIcons: Record<string, React.ReactNode> = {
   PDF: <FileText className="w-5 h-5 text-red-500" />,
@@ -24,19 +29,63 @@ const statusConfig: Record<string, { label: string; variant: "success" | "warnin
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
+  const [companyId, setCompanyId] = useState<string | null>(null);
+  const [modalType, setModalType] = useState<DocumentType | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [sources, setSources] = useState<AiSource[]>([]);
+  const [answering, setAnswering] = useState(false);
 
   const fetchDocuments = useCallback(async () => {
-    const companyId = getCompanyId();
-    if (!companyId) return;
+    const id = getCompanyId();
+    setCompanyId(id);
+    if (!id) {
+      setLoading(false);
+      return;
+    }
+
+    setError(null);
+    setLoading(true);
     try {
-      const res = await documentsApi.list(companyId);
+      const res = await documentsApi.list(id);
       setDocuments(res.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "資料の読み込みに失敗しました");
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => { fetchDocuments(); }, [fetchDocuments]);
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("この資料を削除しますか？")) return;
+    try {
+      await documentsApi.remove(id);
+      await fetchDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "削除に失敗しました");
+    }
+  };
+
+  const handleAnswer = async () => {
+    if (!companyId || !question.trim()) return;
+    setAnswering(true);
+    setAnswer(null);
+    setSources([]);
+    setError(null);
+
+    try {
+      const res = await aiApi.answer({ companyId, question });
+      setAnswer(res.data.answer);
+      setSources(res.data.sources);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "AI回答の生成に失敗しました");
+    } finally {
+      setAnswering(false);
+    }
+  };
 
   return (
     <>
@@ -47,17 +96,59 @@ export default function DocumentsPage() {
             登録資料: {loading ? "—" : `${documents.length} 件`}
           </p>
           <div className="flex gap-2">
-            <Button variant="outline">
+            <Button variant="outline" onClick={() => setModalType("URL")}>
               <Globe className="w-4 h-4 mr-2" />URLを追加
             </Button>
-            <Button variant="outline">
+            <Button variant="outline" onClick={() => setModalType("TEXT")}>
               <AlignLeft className="w-4 h-4 mr-2" />テキストを追加
             </Button>
-            <Button>
-              <Upload className="w-4 h-4 mr-2" />PDFをアップロード
+            <Button onClick={() => setModalType("PDF")}>
+              <Upload className="w-4 h-4 mr-2" />PDFを登録
             </Button>
           </div>
         </div>
+
+        {error && (
+          <p className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-md px-3 py-2">
+            {error}
+          </p>
+        )}
+
+        <Card>
+          <CardContent className="p-5 space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">AI回答テスト</h2>
+                <p className="text-xs text-gray-500 mt-1">
+                  FAQ・参考資料・Bedrock Knowledge Baseを参照して回答します
+                </p>
+              </div>
+              <Button onClick={handleAnswer} disabled={!question.trim() || answering}>
+                {answering ? "生成中..." : "回答生成"}
+              </Button>
+            </div>
+            <Textarea
+              placeholder="例：予約のキャンセルはいつまで無料ですか？"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              rows={3}
+            />
+            {answer && (
+              <div className="rounded-md border border-gray-200 bg-gray-50 p-4 space-y-3">
+                <p className="text-sm text-gray-800 whitespace-pre-wrap">{answer}</p>
+                {sources.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {sources.map((source, index) => (
+                      <Badge key={`${source.type}-${source.id ?? index}`} variant="secondary">
+                        {source.type}: {source.title}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {loading && <p className="text-sm text-gray-400 py-8 text-center">読み込み中...</p>}
 
@@ -100,7 +191,9 @@ export default function DocumentsPage() {
                           {new Date(doc.updatedAt).toLocaleDateString("ja-JP")}
                         </p>
                       </div>
-                      <Button variant="outline" size="sm">詳細</Button>
+                      <Button variant="outline" size="sm" onClick={() => handleDelete(doc.id)}>
+                        削除
+                      </Button>
                     </div>
                   </div>
                 </CardContent>
@@ -109,6 +202,14 @@ export default function DocumentsPage() {
           })}
         </div>
       </main>
+      {companyId && modalType && (
+        <DocumentModal
+          companyId={companyId}
+          initialType={modalType}
+          onClose={() => setModalType(null)}
+          onSaved={fetchDocuments}
+        />
+      )}
     </>
   );
 }

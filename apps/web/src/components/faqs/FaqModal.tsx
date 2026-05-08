@@ -5,8 +5,16 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { faqsApi, type Faq } from "@/lib/api/faqs";
+import { FAQ_CATEGORIES } from "@/lib/faq-categories";
 
 interface FaqModalProps {
   companyId: string;
@@ -20,7 +28,6 @@ export function FaqModal({ companyId, faq, onClose, onSaved }: FaqModalProps) {
   const [category, setCategory] = useState(faq?.category ?? "");
   const [question, setQuestion] = useState(faq?.question ?? "");
   const [answer, setAnswer] = useState(faq?.answer ?? "");
-  const [priority, setPriority] = useState(String(faq?.priority ?? 0));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +36,6 @@ export function FaqModal({ companyId, faq, onClose, onSaved }: FaqModalProps) {
       setCategory(faq.category ?? "");
       setQuestion(faq.question);
       setAnswer(faq.answer);
-      setPriority(String(faq.priority));
     }
   }, [faq]);
 
@@ -43,7 +49,6 @@ export function FaqModal({ companyId, faq, onClose, onSaved }: FaqModalProps) {
           category: category || undefined,
           question,
           answer,
-          priority: Number(priority),
         });
       } else {
         await faqsApi.create({
@@ -51,7 +56,6 @@ export function FaqModal({ companyId, faq, onClose, onSaved }: FaqModalProps) {
           category: category || undefined,
           question,
           answer,
-          priority: Number(priority),
         });
       }
       onSaved();
@@ -81,12 +85,18 @@ export function FaqModal({ companyId, faq, onClose, onSaved }: FaqModalProps) {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="faq-category">カテゴリ</Label>
-            <Input
-              id="faq-category"
-              placeholder="例：予約、営業時間"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-            />
+            <Select value={category} onValueChange={setCategory}>
+              <SelectTrigger id="faq-category">
+                <SelectValue placeholder="カテゴリを選択" />
+              </SelectTrigger>
+              <SelectContent>
+                {FAQ_CATEGORIES.map((item) => (
+                  <SelectItem key={item} value={item}>
+                    {item}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-1.5">
@@ -109,17 +119,6 @@ export function FaqModal({ companyId, faq, onClose, onSaved }: FaqModalProps) {
               onChange={(e) => setAnswer(e.target.value)}
               required
               rows={4}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="faq-priority">優先度（数値が小さいほど上位）</Label>
-            <Input
-              id="faq-priority"
-              type="number"
-              min={0}
-              value={priority}
-              onChange={(e) => setPriority(e.target.value)}
             />
           </div>
 

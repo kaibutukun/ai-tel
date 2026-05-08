@@ -2,16 +2,20 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateFaqDto } from "./dto/create-faq.dto";
 import { UpdateFaqDto } from "./dto/update-faq.dto";
+import { BedrockKnowledgeBaseService } from "../ai/bedrock-knowledge-base.service";
 
 @Injectable()
 export class FaqsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly knowledgeBase: BedrockKnowledgeBaseService
+  ) {}
 
-  /** 会社のFAQ一覧を priority 昇順で返す */
+  /** 会社のFAQ一覧を更新日時順で返す */
   async findAll(companyId: string) {
     const faqs = await this.prisma.fAQ.findMany({
       where: { companyId },
-      orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
     });
     return { data: faqs, meta: { total: faqs.length } };
   }
@@ -29,10 +33,11 @@ export class FaqsService {
         category: dto.category,
         question: dto.question,
         answer: dto.answer,
-        priority: dto.priority ?? 0,
         isActive: dto.isActive ?? true,
       },
     });
+
+    await this.knowledgeBase.upsertFaq(faq);
     return { data: faq };
   }
 
@@ -44,6 +49,8 @@ export class FaqsService {
       where: { id },
       data: dto,
     });
+
+    await this.knowledgeBase.upsertFaq(faq);
     return { data: faq };
   }
 
@@ -52,6 +59,7 @@ export class FaqsService {
     if (!existing) throw new NotFoundException("FAQが見つかりません");
 
     await this.prisma.fAQ.delete({ where: { id } });
+    await this.knowledgeBase.deleteFaq(id);
     return { data: { message: "FAQを削除しました" } };
   }
 }

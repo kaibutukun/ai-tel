@@ -46,7 +46,13 @@ export default function FlowEditPage({ params }: { params: { id: string } }) {
       </div>
       <div className="flex-1 flex overflow-hidden">
         {flow && (
-          <FlowEditor flowName={flow.name} flowStatus={flow.status} />
+          <FlowEditor
+            flowId={flow.id}
+            flowName={flow.name}
+            flowStatus={flow.status}
+            initialFlowJson={flow.flowJson}
+            onSaved={(flowJson) => setFlow((prev) => prev ? { ...prev, flowJson } : prev)}
+          />
         )}
       </div>
     </div>

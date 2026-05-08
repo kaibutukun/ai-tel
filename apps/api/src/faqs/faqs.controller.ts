@@ -16,7 +16,7 @@ import { UpdateFaqDto } from "./dto/update-faq.dto";
 /**
  * FAQ 管理 API
  *
- * GET    /api/faqs?companyId=xxx  - 一覧（priority 昇順）
+ * GET    /api/faqs?companyId=xxx  - 一覧
  * POST   /api/faqs                - 新規作成
  * GET    /api/faqs/:id            - 詳細
  * PATCH  /api/faqs/:id            - 更新

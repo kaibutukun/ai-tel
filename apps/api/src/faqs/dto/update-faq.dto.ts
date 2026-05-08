@@ -1,8 +1,10 @@
-import { IsBoolean, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { IsBoolean, IsIn, IsOptional, IsString } from "class-validator";
+import { FAQ_CATEGORIES } from "./create-faq.dto";
 
 export class UpdateFaqDto {
   @IsOptional()
   @IsString()
+  @IsIn(FAQ_CATEGORIES)
   category?: string;
 
   @IsOptional()
@@ -12,11 +14,6 @@ export class UpdateFaqDto {
   @IsOptional()
   @IsString()
   answer?: string;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  priority?: number;
 
   @IsOptional()
   @IsBoolean()

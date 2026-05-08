@@ -1,11 +1,21 @@
 import {
   IsBoolean,
-  IsInt,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
-  Min,
 } from "class-validator";
+
+export const FAQ_CATEGORIES = [
+  "予約",
+  "営業時間",
+  "キャンセル",
+  "料金",
+  "支払い",
+  "アクセス",
+  "サービス",
+  "その他",
+] as const;
 
 export class CreateFaqDto {
   @IsString()
@@ -14,6 +24,7 @@ export class CreateFaqDto {
 
   @IsOptional()
   @IsString()
+  @IsIn(FAQ_CATEGORIES)
   category?: string;
 
   @IsString()
@@ -23,12 +34,6 @@ export class CreateFaqDto {
   @IsString()
   @IsNotEmpty()
   answer: string;
-
-  /** 表示優先度（数値が小さいほど上位） */
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  priority?: number;
 
   @IsOptional()
   @IsBoolean()

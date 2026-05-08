@@ -6,7 +6,6 @@ export interface Faq {
   category: string | null;
   question: string;
   answer: string;
-  priority: number;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -19,10 +18,10 @@ export const faqsApi = {
   list: (companyId: string) =>
     apiClient.get<ListResponse>(`/faqs?companyId=${companyId}`),
 
-  create: (data: { companyId: string; category?: string; question: string; answer: string; priority?: number }) =>
+  create: (data: { companyId: string; category?: string; question: string; answer: string }) =>
     apiClient.post<SingleResponse>("/faqs", data),
 
-  update: (id: string, data: Partial<Faq>) =>
+  update: (id: string, data: { category?: string; question?: string; answer?: string; isActive?: boolean }) =>
     apiClient.patch<SingleResponse>(`/faqs/${id}`, data),
 
   remove: (id: string) =>

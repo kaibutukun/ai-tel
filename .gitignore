@@ -22,6 +22,10 @@ yarn-debug.log*
 yarn-error.log*
 *.log
 
+# Local uploads
+uploads/
+apps/api/uploads/
+
 # OS
 .DS_Store
 Thumbs.db

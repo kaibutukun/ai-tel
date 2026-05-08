@@ -47,7 +47,7 @@ export type AnyNodeData =
 
 export const ACTION_LABELS: Record<ActionType, string> = {
   faq: "FAQ回答",
-  rag: "AI回答（RAG）",
+  rag: "AI回答（資料検索）",
   transfer: "転送",
   callback: "折り返し受付",
   notify: "通知送信",
