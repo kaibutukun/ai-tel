@@ -1,8 +1,11 @@
+"use client";
+
+import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { mockCallFlows } from "@/mock/data";
+import { callFlowsApi, type CallFlow } from "@/lib/api/call-flows";
 
 const FlowEditor = dynamic(
   () => import("@/components/flow-editor/FlowEditor").then((m) => ({ default: m.FlowEditor })),
@@ -20,22 +23,31 @@ const FlowEditor = dynamic(
 );
 
 export default function FlowEditPage({ params }: { params: { id: string } }) {
-  const flow = mockCallFlows.find((f) => f.id === params.id) || mockCallFlows[0];
+  const [flow, setFlow] = useState<CallFlow | null>(null);
+
+  useEffect(() => {
+    callFlowsApi.get(params.id)
+      .then((res) => setFlow(res.data))
+      .catch(() => {});
+  }, [params.id]);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <div className="h-12 bg-white border-b border-gray-200 flex items-center px-4 gap-3 flex-shrink-0">
         <Link href="/call-flows">
           <Button variant="ghost" size="sm" className="h-8">
-            <ArrowLeft className="w-4 h-4 mr-1" />
-            フロー一覧
+            <ArrowLeft className="w-4 h-4 mr-1" />フロー一覧
           </Button>
         </Link>
         <div className="w-px h-5 bg-gray-200" />
-        <span className="text-sm font-medium text-gray-600">{flow.name}</span>
+        <span className="text-sm font-medium text-gray-600">
+          {flow?.name ?? "読み込み中..."}
+        </span>
       </div>
       <div className="flex-1 flex overflow-hidden">
-        <FlowEditor flowName={flow.name} flowStatus={flow.status} />
+        {flow && (
+          <FlowEditor flowName={flow.name} flowStatus={flow.status} />
+        )}
       </div>
     </div>
   );

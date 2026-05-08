@@ -1,46 +1,67 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { Building2, TrendingUp, Phone, Clock, DollarSign } from "lucide-react";
+import { Building2, DollarSign, Phone, Clock } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { mockAdminCompanies } from "@/mock/data";
+import { Switch } from "@/components/ui/switch";
+import { adminApi, type AdminCompany, type AdminStats } from "@/lib/api/admin";
 
 const planVariants: Record<string, "default" | "secondary" | "outline" | "info" | "success"> = {
-  Trial: "secondary",
-  Starter: "outline",
-  Business: "info",
-  Pro: "default",
-  Enterprise: "success",
+  Trial: "secondary", Starter: "outline", Business: "info", Pro: "default", Enterprise: "success",
 };
 
 const billingVariants: Record<string, "success" | "destructive" | "warning" | "secondary"> = {
-  PAID: "success",
-  UNPAID: "destructive",
-  OVERDUE: "warning",
-  NONE: "secondary",
+  PAID: "success", OPEN: "destructive", PAST_DUE: "warning", NONE: "secondary",
 };
 
 const billingLabels: Record<string, string> = {
-  PAID: "支払済",
-  UNPAID: "未払い",
-  OVERDUE: "期限超過",
-  NONE: "なし",
+  PAID: "支払済", OPEN: "未払い", PAST_DUE: "期限超過", VOID: "無効", NONE: "なし",
 };
 
 export default function AdminPage() {
-  const totalMRR = mockAdminCompanies.reduce((sum, c) => sum + c.priceMonthly, 0);
-  const activeCount = mockAdminCompanies.filter((c) => c.isActive).length;
-  const totalCalls = mockAdminCompanies.reduce((sum, c) => sum + c.callsThisMonth, 0);
-  const totalMinutes = mockAdminCompanies.reduce((sum, c) => sum + c.minutesThisMonth, 0);
+  const [companies, setCompanies] = useState<AdminCompany[]>([]);
+  const [stats, setStats] = useState<AdminStats | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await adminApi.listCompanies();
+      setCompanies(res.data);
+      setStats(res.stats);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const toggleActive = async (id: string, current: boolean) => {
+    try {
+      await adminApi.updateCompany(id, { isActive: !current });
+      setCompanies((prev) => prev.map((c) => c.id === id ? { ...c, isActive: !current } : c));
+    } catch {
+      alert("更新に失敗しました");
+    }
+  };
+
+  const totalMRR = stats?.totalMRR ?? 0;
+  const totalCompanies = stats?.totalCompanies ?? 0;
+  const totalCalls = stats?.totalCalls ?? 0;
+  const totalMinutes = stats?.totalMinutes ?? 0;
 
   return (
     <>
       <Header title="管理者ダッシュボード" />
       <main className="flex-1 p-6 space-y-6">
+        {loading && <p className="text-sm text-gray-400">読み込み中...</p>}
+
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { label: "登録企業数", value: `${mockAdminCompanies.length}社`, icon: Building2, color: "text-blue-600", bg: "bg-blue-50" },
+            { label: "登録企業数", value: `${totalCompanies}社`, icon: Building2, color: "text-blue-600", bg: "bg-blue-50" },
             { label: "今月MRR", value: `¥${totalMRR.toLocaleString()}`, icon: DollarSign, color: "text-green-600", bg: "bg-green-50" },
             { label: "今月の総通話数", value: `${totalCalls}件`, icon: Phone, color: "text-purple-600", bg: "bg-purple-50" },
             { label: "今月の総通話時間", value: `${totalMinutes}分`, icon: Clock, color: "text-orange-600", bg: "bg-orange-50" },
@@ -62,33 +83,30 @@ export default function AdminPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Building2 className="w-5 h-5" />
-              登録企業一覧
+              <Building2 className="w-5 h-5" />登録企業一覧
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {["企業名", "プラン", "月額", "今月通話数", "通話時間", "電話番号数", "請求", "ステータス", ""].map((h) => (
-                    <th
-                      key={h}
-                      className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3"
-                    >
-                      {h}
-                    </th>
+                  {["企業名", "プラン", "月額", "今月通話数", "通話時間", "電話番号数", "請求", "有効", ""].map((h) => (
+                    <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {mockAdminCompanies.map((company) => (
+                {companies.length === 0 && !loading && (
+                  <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">企業がありません</td></tr>
+                )}
+                {companies.map((company) => (
                   <tr key={company.id} className={`hover:bg-gray-50 ${!company.isActive ? "opacity-50" : ""}`}>
                     <td className="px-4 py-4">
                       <p className="text-sm font-medium text-gray-900">{company.name}</p>
                       <p className="text-xs text-gray-400">{company.createdAt}〜</p>
                     </td>
                     <td className="px-4 py-4">
-                      <Badge variant={planVariants[company.plan] || "secondary"}>{company.plan}</Badge>
+                      <Badge variant={planVariants[company.plan] ?? "secondary"}>{company.plan}</Badge>
                     </td>
                     <td className="px-4 py-4 text-sm text-gray-700">
                       {company.priceMonthly > 0 ? `¥${company.priceMonthly.toLocaleString()}` : "無料"}
@@ -97,14 +115,12 @@ export default function AdminPage() {
                     <td className="px-4 py-4 text-sm text-gray-700">{company.minutesThisMonth}分</td>
                     <td className="px-4 py-4 text-sm text-gray-700">{company.phoneNumbersCount}番号</td>
                     <td className="px-4 py-4">
-                      <Badge variant={billingVariants[company.billingStatus] || "secondary"}>
-                        {billingLabels[company.billingStatus] || company.billingStatus}
+                      <Badge variant={billingVariants[company.billingStatus] ?? "secondary"}>
+                        {billingLabels[company.billingStatus] ?? company.billingStatus}
                       </Badge>
                     </td>
                     <td className="px-4 py-4">
-                      <Badge variant={company.isActive ? "success" : "secondary"}>
-                        {company.isActive ? "アクティブ" : "停止中"}
-                      </Badge>
+                      <Switch checked={company.isActive} onCheckedChange={() => toggleActive(company.id, company.isActive)} />
                     </td>
                     <td className="px-4 py-4">
                       <Link href={`/admin/companies/${company.id}`}>

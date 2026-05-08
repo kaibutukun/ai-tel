@@ -1,39 +1,22 @@
-import { Injectable } from "@nestjs/common";
-
-const MOCK_DOCUMENTS = [
-  {
-    id: "doc_1",
-    name: "サービス案内.pdf",
-    type: "PDF",
-    status: "AVAILABLE",
-    usedInFlows: ["標準対応フロー"],
-    updatedAt: "2024-03-01T00:00:00.000Z",
-  },
-  {
-    id: "doc_2",
-    name: "よくある質問まとめ",
-    type: "TEXT",
-    status: "AVAILABLE",
-    usedInFlows: ["標準対応フロー", "予約受付フロー"],
-    updatedAt: "2024-03-10T00:00:00.000Z",
-  },
-  {
-    id: "doc_3",
-    name: "https://example.com/menu",
-    type: "URL",
-    status: "PROCESSING",
-    usedInFlows: [],
-    updatedAt: "2024-03-15T00:00:00.000Z",
-  },
-];
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
 export class DocumentsService {
-  findAll() {
-    return { data: MOCK_DOCUMENTS, meta: { total: MOCK_DOCUMENTS.length } };
+  constructor(private readonly prisma: PrismaService) {}
+
+  /** 会社のドキュメント一覧を返す */
+  async findAll(companyId: string) {
+    const documents = await this.prisma.document.findMany({
+      where: { companyId },
+      orderBy: { updatedAt: "desc" },
+    });
+    return { data: documents, meta: { total: documents.length } };
   }
 
-  findOne(id: string) {
-    return { data: MOCK_DOCUMENTS.find((d) => d.id === id) || MOCK_DOCUMENTS[0] };
+  async findOne(id: string) {
+    const doc = await this.prisma.document.findUnique({ where: { id } });
+    if (!doc) throw new NotFoundException("ドキュメントが見つかりません");
+    return { data: doc };
   }
 }

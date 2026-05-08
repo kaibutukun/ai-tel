@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Phone,
   LayoutDashboard,
@@ -14,8 +14,11 @@ import {
   Settings,
   Shield,
   Building2,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { clearAuth, getCurrentUser } from "@/lib/auth";
+import { useEffect, useState } from "react";
 
 const navItems = [
   { href: "/dashboard", label: "ダッシュボード", icon: LayoutDashboard },
@@ -35,6 +38,20 @@ const adminItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+
+  useEffect(() => {
+    const u = getCurrentUser();
+    if (u) setUser({ name: u.name, email: u.email });
+  }, []);
+
+  const handleLogout = () => {
+    clearAuth();
+    router.push("/login");
+  };
+
+  const initial = user?.name?.[0] ?? "?";
 
   return (
     <aside className="fixed inset-y-0 left-0 z-50 w-60 bg-white border-r border-gray-200 flex flex-col">
@@ -86,7 +103,7 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="p-4 border-t border-gray-200">
+      <div className="p-4 border-t border-gray-200 space-y-2">
         <Link
           href="/settings"
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100"
@@ -94,13 +111,22 @@ export function Sidebar() {
           <Settings className="w-4 h-4" />
           設定
         </Link>
-        <div className="mt-3 flex items-center gap-3 px-3">
-          <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-sm font-medium text-gray-600">
-            田
+
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-red-50 hover:text-red-600 transition-colors"
+        >
+          <LogOut className="w-4 h-4" />
+          ログアウト
+        </button>
+
+        <div className="mt-1 flex items-center gap-3 px-3 py-2">
+          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-sm font-medium text-blue-700 flex-shrink-0">
+            {initial}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate">田中 太郎</p>
-            <p className="text-xs text-gray-500 truncate">tanaka@example.com</p>
+            <p className="text-sm font-medium text-gray-900 truncate">{user?.name ?? "—"}</p>
+            <p className="text-xs text-gray-500 truncate">{user?.email ?? "—"}</p>
           </div>
         </div>
       </div>

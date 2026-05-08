@@ -1,33 +1,35 @@
-import { Injectable } from "@nestjs/common";
-
-const MOCK_COMPANIES = [
-  {
-    id: "cmp_1",
-    name: "株式会社サンプル",
-    slug: "sample",
-    industry: "小売業",
-    isActive: true,
-    phoneMain: "03-1234-5678",
-    createdAt: "2024-01-15T00:00:00.000Z",
-  },
-  {
-    id: "cmp_2",
-    name: "テスト歯科クリニック",
-    slug: "test-dental",
-    industry: "医療",
-    isActive: true,
-    phoneMain: "06-9876-5432",
-    createdAt: "2024-02-01T00:00:00.000Z",
-  },
-];
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
 export class CompaniesService {
-  findAll() {
-    return { data: MOCK_COMPANIES, meta: { total: MOCK_COMPANIES.length } };
+  constructor(private readonly prisma: PrismaService) {}
+
+  /** 全会社の一覧（管理画面用） */
+  async findAll() {
+    const companies = await this.prisma.company.findMany({
+      include: {
+        _count: {
+          select: { members: true, phoneNumbers: true, callSessions: true },
+        },
+        subscription: { include: { plan: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return { data: companies, meta: { total: companies.length } };
   }
 
-  findOne(id: string) {
-    return { data: MOCK_COMPANIES.find((c) => c.id === id) || MOCK_COMPANIES[0] };
+  async findOne(id: string) {
+    const company = await this.prisma.company.findUnique({
+      where: { id },
+      include: {
+        members: { include: { user: true } },
+        phoneNumbers: true,
+        subscription: { include: { plan: true } },
+        _count: { select: { callSessions: true, faqs: true, documents: true } },
+      },
+    });
+    if (!company) throw new NotFoundException("会社が見つかりません");
+    return { data: company };
   }
 }

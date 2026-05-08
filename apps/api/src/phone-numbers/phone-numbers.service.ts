@@ -1,35 +1,52 @@
-import { Injectable } from "@nestjs/common";
-
-const MOCK_PHONE_NUMBERS = [
-  {
-    id: "pn_1",
-    number: "050-1234-5678",
-    displayName: "代表回線",
-    callFlowId: "cf_1",
-    callFlowName: "標準対応フロー",
-    transferTo: "090-1111-2222",
-    isActive: true,
-    businessHours: "平日 9:00-18:00",
-  },
-  {
-    id: "pn_2",
-    number: "050-9876-5432",
-    displayName: "予約専用",
-    callFlowId: "cf_2",
-    callFlowName: "予約受付フロー",
-    transferTo: null,
-    isActive: true,
-    businessHours: "毎日 10:00-20:00",
-  },
-];
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { UpdatePhoneNumberDto } from "./dto/update-phone-number.dto";
 
 @Injectable()
 export class PhoneNumbersService {
-  findAll() {
-    return { data: MOCK_PHONE_NUMBERS, meta: { total: MOCK_PHONE_NUMBERS.length } };
+  constructor(private readonly prisma: PrismaService) {}
+
+  /** 会社の電話番号一覧を取得（コールフロー・営業時間を include） */
+  async findAll(companyId: string) {
+    const phoneNumbers = await this.prisma.phoneNumber.findMany({
+      where: { companyId },
+      include: {
+        callFlow: { select: { id: true, name: true } },
+        businessHours: { orderBy: { dayOfWeek: "asc" } },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    return { data: phoneNumbers, meta: { total: phoneNumbers.length } };
   }
 
-  findOne(id: string) {
-    return { data: MOCK_PHONE_NUMBERS.find((p) => p.id === id) || MOCK_PHONE_NUMBERS[0] };
+  async findOne(id: string) {
+    const phoneNumber = await this.prisma.phoneNumber.findUnique({
+      where: { id },
+      include: {
+        callFlow: true,
+        businessHours: { orderBy: { dayOfWeek: "asc" } },
+      },
+    });
+    if (!phoneNumber) throw new NotFoundException("電話番号が見つかりません");
+    return { data: phoneNumber };
+  }
+
+  /**
+   * 電話番号の表示設定を更新する
+   * Twilio 番号の追加・削除はコアロジック（未実装）が担当
+   */
+  async update(id: string, dto: UpdatePhoneNumberDto) {
+    const existing = await this.prisma.phoneNumber.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException("電話番号が見つかりません");
+
+    const phoneNumber = await this.prisma.phoneNumber.update({
+      where: { id },
+      data: dto,
+      include: {
+        callFlow: { select: { id: true, name: true } },
+        businessHours: { orderBy: { dayOfWeek: "asc" } },
+      },
+    });
+    return { data: phoneNumber };
   }
 }

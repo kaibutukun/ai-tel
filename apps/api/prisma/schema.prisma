@@ -15,12 +15,14 @@ datasource db {
 // ============================================================
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String
-  avatarUrl String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  avatarUrl    String?
+  // scrypt ハッシュ "salt:hash" 形式 / 招待経由で作成した場合は null
+  passwordHash String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   companyMembers CompanyMember[]
   adminRole      Boolean         @default(false)
@@ -60,7 +62,7 @@ model CompanyMember {
   id        String    @id @default(cuid())
   companyId String
   userId    String
-  role      Role      @default(MEMBER)
+  role      Role      @default(GENERAL)
   invitedAt DateTime  @default(now())
   joinedAt  DateTime?
   isActive  Boolean   @default(true)
@@ -71,11 +73,10 @@ model CompanyMember {
   @@unique([companyId, userId])
 }
 
+// 管理者: 全設定を操作可能 / 一般: 通話ログ・FAQ等の参照のみ
 enum Role {
-  OWNER
   ADMIN
-  MEMBER
-  VIEWER
+  GENERAL
 }
 
 // ============================================================

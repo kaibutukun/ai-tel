@@ -1,4 +1,5 @@
-export type Role = "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
+// 管理者: 全設定を操作可能 / 一般: 参照のみ
+export type Role = "ADMIN" | "GENERAL";
 
 export type PlanType = "TRIAL" | "STARTER" | "BUSINESS" | "PRO" | "ENTERPRISE";
 

@@ -1,10 +1,9 @@
-import { NestFactory, Reflector } from "@nestjs/core";
+import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module";
 import { ResponseInterceptor } from "./common/interceptors/response.interceptor";
 import { TimeoutInterceptor } from "./common/interceptors/timeout.interceptor";
 import { AllExceptionsFilter } from "./common/filters/http-exception.filter";
-import { JwtAuthGuard } from "./common/guards/jwt-auth.guard";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -18,7 +17,6 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -27,15 +25,12 @@ async function bootstrap() {
     })
   );
 
-  // Global interceptors
-  const reflector = app.get(Reflector);
-  app.useGlobalGuards(new JwtAuthGuard(reflector));
+  // JwtAuthGuard は AppModule の APP_GUARD で登録済み（DI対応）
   app.useGlobalInterceptors(
     new ResponseInterceptor(),
     new TimeoutInterceptor(30000)
   );
 
-  // Global exception filter
   app.useGlobalFilters(new AllExceptionsFilter());
 
   const port = process.env.PORT || 3001;

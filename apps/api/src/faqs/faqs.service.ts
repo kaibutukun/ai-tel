@@ -1,47 +1,57 @@
-import { Injectable } from "@nestjs/common";
-
-const MOCK_FAQS = [
-  {
-    id: "faq_1",
-    category: "予約",
-    question: "予約はどのようにすればよいですか？",
-    answer: "お電話またはウェブサイトからご予約いただけます。",
-    priority: 1,
-    isActive: true,
-  },
-  {
-    id: "faq_2",
-    category: "営業時間",
-    question: "営業時間を教えてください。",
-    answer: "平日9:00〜18:00、土曜10:00〜17:00です。日祝はお休みです。",
-    priority: 2,
-    isActive: true,
-  },
-  {
-    id: "faq_3",
-    category: "キャンセル",
-    question: "キャンセルポリシーを教えてください。",
-    answer: "前日までのキャンセルは無料です。当日キャンセルはキャンセル料が発生します。",
-    priority: 3,
-    isActive: true,
-  },
-  {
-    id: "faq_4",
-    category: "支払い",
-    question: "支払い方法は何がありますか？",
-    answer: "現金・クレジットカード・電子マネーがご利用いただけます。",
-    priority: 4,
-    isActive: false,
-  },
-];
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { CreateFaqDto } from "./dto/create-faq.dto";
+import { UpdateFaqDto } from "./dto/update-faq.dto";
 
 @Injectable()
 export class FaqsService {
-  findAll() {
-    return { data: MOCK_FAQS, meta: { total: MOCK_FAQS.length } };
+  constructor(private readonly prisma: PrismaService) {}
+
+  /** 会社のFAQ一覧を priority 昇順で返す */
+  async findAll(companyId: string) {
+    const faqs = await this.prisma.fAQ.findMany({
+      where: { companyId },
+      orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
+    });
+    return { data: faqs, meta: { total: faqs.length } };
   }
 
-  findOne(id: string) {
-    return { data: MOCK_FAQS.find((f) => f.id === id) || MOCK_FAQS[0] };
+  async findOne(id: string) {
+    const faq = await this.prisma.fAQ.findUnique({ where: { id } });
+    if (!faq) throw new NotFoundException("FAQが見つかりません");
+    return { data: faq };
+  }
+
+  async create(dto: CreateFaqDto) {
+    const faq = await this.prisma.fAQ.create({
+      data: {
+        companyId: dto.companyId,
+        category: dto.category,
+        question: dto.question,
+        answer: dto.answer,
+        priority: dto.priority ?? 0,
+        isActive: dto.isActive ?? true,
+      },
+    });
+    return { data: faq };
+  }
+
+  async update(id: string, dto: UpdateFaqDto) {
+    const existing = await this.prisma.fAQ.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException("FAQが見つかりません");
+
+    const faq = await this.prisma.fAQ.update({
+      where: { id },
+      data: dto,
+    });
+    return { data: faq };
+  }
+
+  async remove(id: string) {
+    const existing = await this.prisma.fAQ.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException("FAQが見つかりません");
+
+    await this.prisma.fAQ.delete({ where: { id } });
+    return { data: { message: "FAQを削除しました" } };
   }
 }

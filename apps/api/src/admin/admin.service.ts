@@ -1,70 +1,105 @@
-import { Injectable } from "@nestjs/common";
-
-const MOCK_ADMIN_COMPANIES = [
-  {
-    id: "cmp_1",
-    name: "株式会社サンプル",
-    plan: "Business",
-    priceMonthly: 29800,
-    callsThisMonth: 342,
-    minutesThisMonth: 287,
-    phoneNumbersCount: 2,
-    billingStatus: "PAID",
-    isActive: true,
-    createdAt: "2024-01-15T00:00:00.000Z",
-  },
-  {
-    id: "cmp_2",
-    name: "テスト歯科クリニック",
-    plan: "Starter",
-    priceMonthly: 9800,
-    callsThisMonth: 98,
-    minutesThisMonth: 76,
-    phoneNumbersCount: 1,
-    billingStatus: "PAID",
-    isActive: true,
-    createdAt: "2024-02-01T00:00:00.000Z",
-  },
-  {
-    id: "cmp_3",
-    name: "停止中商事",
-    plan: "Trial",
-    priceMonthly: 0,
-    callsThisMonth: 0,
-    minutesThisMonth: 0,
-    phoneNumbersCount: 0,
-    billingStatus: "NONE",
-    isActive: false,
-    createdAt: "2024-03-01T00:00:00.000Z",
-  },
-];
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { UpdateCompanyDto } from "./dto/update-company.dto";
 
 @Injectable()
 export class AdminService {
-  findAllCompanies() {
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * 全企業の一覧 + 今月の利用状況 + プラット幅広いサマリー統計
+   */
+  async findAllCompanies() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+
+    const companies = await this.prisma.company.findMany({
+      include: {
+        subscription: { include: { plan: true } },
+        usageRecords: { where: { year, month } },
+        invoices: {
+          where: { year, month },
+          select: { status: true, total: true },
+        },
+        _count: { select: { phoneNumbers: true, members: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // プラットフォーム全体の集計
+    const totalMRR = companies.reduce(
+      (sum, c) => sum + (c.subscription?.plan?.priceMonthly ?? 0),
+      0
+    );
+    const totalCalls = companies.reduce(
+      (sum, c) => sum + (c.usageRecords[0]?.totalCalls ?? 0),
+      0
+    );
+    const totalMinutes = companies.reduce(
+      (sum, c) => sum + (c.usageRecords[0]?.totalMinutes ?? 0),
+      0
+    );
+
     return {
-      data: MOCK_ADMIN_COMPANIES,
-      meta: { total: MOCK_ADMIN_COMPANIES.length },
+      data: companies.map((c) => ({
+        id: c.id,
+        name: c.name,
+        slug: c.slug,
+        isActive: c.isActive,
+        createdAt: c.createdAt.toISOString().slice(0, 10),
+        plan: c.subscription?.plan?.name ?? "なし",
+        planType: c.subscription?.plan?.type ?? null,
+        priceMonthly: c.subscription?.plan?.priceMonthly ?? 0,
+        callsThisMonth: c.usageRecords[0]?.totalCalls ?? 0,
+        minutesThisMonth: c.usageRecords[0]?.totalMinutes ?? 0,
+        phoneNumbersCount: c._count.phoneNumbers,
+        memberCount: c._count.members,
+        billingStatus: c.invoices[0]?.status ?? "NONE",
+      })),
+      meta: { total: companies.length },
       stats: {
-        totalCompanies: MOCK_ADMIN_COMPANIES.length,
-        activeCompanies: MOCK_ADMIN_COMPANIES.filter((c) => c.isActive).length,
-        totalMRR: MOCK_ADMIN_COMPANIES.reduce((sum, c) => sum + c.priceMonthly, 0),
+        totalCompanies: companies.length,
+        activeCompanies: companies.filter((c) => c.isActive).length,
+        totalMRR,
+        totalCalls,
+        totalMinutes,
       },
     };
   }
 
-  findCompany(id: string) {
-    const company = MOCK_ADMIN_COMPANIES.find((c) => c.id === id) || MOCK_ADMIN_COMPANIES[0];
-    return {
-      data: {
-        ...company,
-        adminNotes: "2024年1月から契約。安定利用中。",
-        invoiceHistory: [
-          { month: "2024-03", total: 29800, status: "PAID" },
-          { month: "2024-02", total: 29800, status: "PAID" },
-          { month: "2024-01", total: 29800, status: "PAID" },
-        ],
+  /** 企業詳細（請求履歴・メンバー・電話番号含む） */
+  async findCompany(id: string) {
+    const company = await this.prisma.company.findUnique({
+      where: { id },
+      include: {
+        subscription: { include: { plan: true } },
+        members: { include: { user: true } },
+        phoneNumbers: true,
+        invoices: {
+          orderBy: [{ year: "desc" }, { month: "desc" }],
+          take: 12,
+        },
+        usageRecords: {
+          orderBy: [{ year: "desc" }, { month: "desc" }],
+          take: 12,
+        },
+        _count: { select: { callSessions: true, faqs: true, documents: true } },
       },
-    };
+    });
+    if (!company) throw new NotFoundException("企業が見つかりません");
+    return { data: company };
+  }
+
+  /** 企業情報を更新（有効/無効切替・管理者メモ） */
+  async updateCompany(id: string, dto: UpdateCompanyDto) {
+    const existing = await this.prisma.company.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException("企業が見つかりません");
+
+    const company = await this.prisma.company.update({
+      where: { id },
+      data: dto,
+    });
+    return { data: company };
   }
 }
