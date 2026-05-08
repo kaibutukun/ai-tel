@@ -22,7 +22,7 @@ export interface AuthUser {
 export function setAuthToken(token: string): void {
   const expires = new Date();
   expires.setDate(expires.getDate() + 7);
-  document.cookie = `${TOKEN_KEY}=${token}; path=/; expires=${expires.toUTCString()}; SameSite=Lax`;
+  document.cookie = `${TOKEN_KEY}=${encodeURIComponent(token)}; path=/; expires=${expires.toUTCString()}; SameSite=Lax`;
 }
 
 /** Cookie からトークンを取得 */
@@ -31,7 +31,12 @@ export function getAuthToken(): string | null {
   const match = document.cookie.match(
     new RegExp(`(?:^|; )${TOKEN_KEY}=([^;]*)`)
   );
-  return match ? decodeURIComponent(match[1]) : null;
+  if (!match) return null;
+
+  const token = decodeURIComponent(match[1]);
+  return token && token !== "undefined" && token.split(".").length === 3
+    ? token
+    : null;
 }
 
 /** ログアウト — Cookie とローカルストレージをクリア */

@@ -193,8 +193,8 @@ export default function LoginPage() {
           {isDev && (
             <div className="mt-6 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200">
               <p className="text-xs font-medium text-amber-700 mb-1">デモ用ログイン情報</p>
-              <p className="text-xs text-amber-600">メール: kaibutukun1201@gmail.com</p>
-              <p className="text-xs text-amber-600">パスワード: testkai</p>
+              <p className="text-xs text-amber-600">メール: demo@ai-tel.jp</p>
+              <p className="text-xs text-amber-600">パスワード: password</p>
             </div>
           )}
         </div>

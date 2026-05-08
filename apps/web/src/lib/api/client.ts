@@ -13,7 +13,12 @@ const API_BASE =
 function getTokenFromCookie(): string | null {
   if (typeof document === "undefined") return null;
   const match = document.cookie.match(/(?:^|; )auth_token=([^;]*)/);
-  return match ? decodeURIComponent(match[1]) : null;
+  if (!match) return null;
+
+  const token = decodeURIComponent(match[1]);
+  return token && token !== "undefined" && token.split(".").length === 3
+    ? token
+    : null;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -30,7 +35,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.message ?? `API error: ${res.status}`);
+    const message = body.error?.message ?? body.message;
+    throw new Error(
+      Array.isArray(message)
+        ? message.join(", ")
+        : message ?? `API error: ${res.status}`
+    );
   }
 
   return res.json() as Promise<T>;

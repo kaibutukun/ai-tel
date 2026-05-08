@@ -7,16 +7,13 @@ export class LoggerMiddleware implements NestMiddleware {
 
   use(req: Request, res: Response, next: NextFunction) {
     const { method, originalUrl } = req;
-    const userAgent = req.get("user-agent") || "";
     const start = Date.now();
 
     res.on("finish", () => {
       const { statusCode } = res;
       const elapsed = Date.now() - start;
       const level = statusCode >= 500 ? "error" : statusCode >= 400 ? "warn" : "log";
-      this.logger[level](
-        `${method} ${originalUrl} ${statusCode} ${elapsed}ms — ${userAgent}`
-      );
+      this.logger[level](`${method} ${originalUrl} ${statusCode} ${elapsed}ms`);
     });
 
     next();

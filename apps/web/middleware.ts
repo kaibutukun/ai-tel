@@ -13,6 +13,7 @@ const PUBLIC_PATHS = ["/login"];
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const token = request.cookies.get("auth_token")?.value;
+  const hasValidToken = token?.split(".").length === 3;
 
   const isPublic = PUBLIC_PATHS.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`)
@@ -20,17 +21,21 @@ export function middleware(request: NextRequest) {
 
   if (isPublic) {
     // ログイン済みならダッシュボードへ
-    if (token) {
+    if (hasValidToken) {
       return NextResponse.redirect(new URL("/dashboard", request.url));
     }
-    return NextResponse.next();
+    const response = NextResponse.next();
+    if (token) response.cookies.delete("auth_token");
+    return response;
   }
 
   // 未ログインならログインページへ
-  if (!token) {
+  if (!hasValidToken) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("from", pathname);
-    return NextResponse.redirect(loginUrl);
+    const response = NextResponse.redirect(loginUrl);
+    if (token) response.cookies.delete("auth_token");
+    return response;
   }
 
   return NextResponse.next();

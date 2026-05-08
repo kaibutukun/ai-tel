@@ -1,7 +1,6 @@
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module";
-import { ResponseInterceptor } from "./common/interceptors/response.interceptor";
 import { TimeoutInterceptor } from "./common/interceptors/timeout.interceptor";
 import { AllExceptionsFilter } from "./common/filters/http-exception.filter";
 
@@ -26,10 +25,7 @@ async function bootstrap() {
   );
 
   // JwtAuthGuard は AppModule の APP_GUARD で登録済み（DI対応）
-  app.useGlobalInterceptors(
-    new ResponseInterceptor(),
-    new TimeoutInterceptor(30000)
-  );
+  app.useGlobalInterceptors(new TimeoutInterceptor(30000));
 
   app.useGlobalFilters(new AllExceptionsFilter());
 
