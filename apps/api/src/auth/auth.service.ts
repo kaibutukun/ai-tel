@@ -57,6 +57,7 @@ export class AuthService {
       email: user.email,
       companyId: membership?.companyId ?? null,
       role: membership?.role ?? null,
+      adminRole: user.adminRole,
     };
 
     const token = this.jwtService.sign(payload);
@@ -71,6 +72,7 @@ export class AuthService {
           avatarUrl: user.avatarUrl,
           companyId: membership?.companyId ?? null,
           role: membership?.role ?? null,
+          adminRole: user.adminRole,
         },
       },
     };

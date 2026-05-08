@@ -15,6 +15,7 @@ export interface AuthUser {
   avatarUrl?: string | null;
   companyId: string | null;
   role: string | null;
+  adminRole: boolean;
 }
 
 /** JWT トークンを Cookie にセット（7日間有効） */

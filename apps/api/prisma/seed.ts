@@ -62,7 +62,20 @@ async function main() {
   });
   console.log(`✅ Company: ${company.name} (${company.id})`);
 
-  // ── ユーザー ──────────────────────────────────────────────────────────
+  // ── プラットフォーム運営者（kaibutukun） ───────────────────────────────
+  await prisma.user.upsert({
+    where: { email: "kaibutukun1201@gmail.com" },
+    create: {
+      email: "kaibutukun1201@gmail.com",
+      name: "運営管理者",
+      passwordHash: hashPassword("testkai"),
+      adminRole: true,
+    },
+    update: { passwordHash: hashPassword("testkai"), adminRole: true },
+  });
+  console.log(`✅ PlatformAdmin: kaibutukun1201@gmail.com`);
+
+  // ── デモ会社ユーザー ──────────────────────────────────────────────────
   const user = await prisma.user.upsert({
     where: { email: "demo@ai-tel.jp" },
     create: {
@@ -182,7 +195,8 @@ async function main() {
   console.log(`✅ UsageRecord: ${now.getFullYear()}/${now.getMonth() + 1}`);
 
   console.log("\n🎉 Seed complete!");
-  console.log(`   Login: demo@ai-tel.jp / password`);
+  console.log(`   Platform admin: kaibutukun1201@gmail.com / testkai`);
+  console.log(`   Demo user:      demo@ai-tel.jp / password`);
   console.log(`   CompanyId: ${company.id}`);
 }
 

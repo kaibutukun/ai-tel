@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   Phone,
   LayoutDashboard,
@@ -17,7 +17,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { clearAuth, getCurrentUser } from "@/lib/auth";
+import { clearAuth, getCurrentUser, getAuthToken } from "@/lib/auth";
 import { useEffect, useState } from "react";
 
 const navItems = [
@@ -36,22 +36,46 @@ const adminItems = [
   { href: "/admin/companies", label: "企業管理", icon: Building2 },
 ];
 
+/** base64url → JSON（JWTペイロードのデコード用） */
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return null;
+    // base64url を標準 base64 に変換してパディングを補完
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
 export function Sidebar() {
   const pathname = usePathname();
-  const router = useRouter();
-  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const [user, setUser] = useState<{ name: string; email: string; adminRole: boolean } | null>(null);
 
   useEffect(() => {
-    const u = getCurrentUser();
-    if (u) setUser({ name: u.name, email: u.email });
+    const token = getAuthToken();
+    const cached = getCurrentUser();
+
+    // adminRole はJWT（サーバー発行・改ざん検証済み）を正として扱う
+    const jwtPayload = token ? decodeJwtPayload(token) : null;
+    const adminRole = Boolean(jwtPayload?.adminRole);
+    const email = (jwtPayload?.email as string) ?? cached?.email ?? "";
+
+    // 表示名はsessionStorageのキャッシュを優先（JWTには name が入っていない）
+    const name = cached?.name ?? email;
+
+    setUser({ name, email, adminRole });
   }, []);
 
   const handleLogout = () => {
     clearAuth();
-    router.push("/login");
+    // router.push だとブラウザキャッシュが残ることがあるので完全リロード
+    window.location.href = "/login";
   };
 
-  const initial = user?.name?.[0] ?? "?";
+  const initial = user?.name?.[0]?.toUpperCase() ?? "?";
 
   return (
     <aside className="fixed inset-y-0 left-0 z-50 w-60 bg-white border-r border-gray-200 flex flex-col">
@@ -81,26 +105,30 @@ export function Sidebar() {
           </Link>
         ))}
 
-        <div className="pt-4 pb-2">
-          <p className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-            運営者
-          </p>
-        </div>
-        {adminItems.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className={cn(
-              "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-              pathname === href || pathname.startsWith(href + "/")
-                ? "bg-purple-50 text-purple-700"
-                : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-            )}
-          >
-            <Icon className="w-4 h-4 flex-shrink-0" />
-            {label}
-          </Link>
-        ))}
+        {user?.adminRole && (
+          <>
+            <div className="pt-4 pb-2">
+              <p className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                運営者
+              </p>
+            </div>
+            {adminItems.map(({ href, label, icon: Icon }) => (
+              <Link
+                key={href}
+                href={href}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                  pathname === href || pathname.startsWith(href + "/")
+                    ? "bg-purple-50 text-purple-700"
+                    : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                )}
+              >
+                <Icon className="w-4 h-4 flex-shrink-0" />
+                {label}
+              </Link>
+            ))}
+          </>
+        )}
       </nav>
 
       <div className="p-4 border-t border-gray-200 space-y-2">
