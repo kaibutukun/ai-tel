@@ -1,0 +1,408 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// Auth & User
+// ============================================================
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companyMembers CompanyMember[]
+  adminRole      Boolean         @default(false)
+}
+
+// ============================================================
+// Company (テナント)
+// ============================================================
+
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  logoUrl   String?
+  phoneMain String?
+  address   String?
+  website   String?
+  industry  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members              CompanyMember[]
+  phoneNumbers         PhoneNumber[]
+  callFlows            CallFlow[]
+  faqs                 FAQ[]
+  documents            Document[]
+  callSessions         CallSession[]
+  notificationSettings NotificationSetting[]
+  subscription         Subscription?
+  usageRecords         UsageRecord[]
+  invoices             Invoice[]
+  adminNotes           String?
+}
+
+model CompanyMember {
+  id        String    @id @default(cuid())
+  companyId String
+  userId    String
+  role      Role      @default(MEMBER)
+  invitedAt DateTime  @default(now())
+  joinedAt  DateTime?
+  isActive  Boolean   @default(true)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, userId])
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+// ============================================================
+// Phone Number
+// ============================================================
+
+model PhoneNumber {
+  id          String   @id @default(cuid())
+  companyId   String
+  number      String   @unique
+  displayName String?
+  callFlowId  String?
+  transferTo  String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company       Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  callFlow      CallFlow?     @relation(fields: [callFlowId], references: [id])
+  businessHours BusinessHour[]
+  callSessions  CallSession[]
+}
+
+model BusinessHour {
+  id            String  @id @default(cuid())
+  phoneNumberId String
+  dayOfWeek     Int
+  openTime      String
+  closeTime     String
+  isClosed      Boolean @default(false)
+
+  phoneNumber PhoneNumber @relation(fields: [phoneNumberId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// Call Flow (ノードベース)
+// ============================================================
+
+model CallFlow {
+  id          String     @id @default(cuid())
+  companyId   String
+  name        String
+  description String?
+  status      FlowStatus @default(DRAFT)
+  // React Flow の nodes/edges を JSON で保存
+  flowJson    Json?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  phoneNumbers PhoneNumber[]
+  callSessions CallSession[]
+}
+
+enum FlowStatus {
+  PUBLISHED
+  DRAFT
+}
+
+// ============================================================
+// FAQ
+// ============================================================
+
+model FAQ {
+  id        String   @id @default(cuid())
+  companyId String
+  category  String?
+  question  String
+  answer    String
+  priority  Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company         Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  callSessionFaqs CallSessionFaq[]
+}
+
+// ============================================================
+// Document (RAG用資料)
+// ============================================================
+
+model Document {
+  id          String         @id @default(cuid())
+  companyId   String
+  name        String
+  type        DocumentType
+  url         String?
+  content     String?
+  status      DocumentStatus @default(PROCESSING)
+  usedInFlows String[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  company         Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  chunks          DocumentChunk[]
+  callSessionDocs CallSessionDocument[]
+}
+
+enum DocumentType {
+  PDF
+  URL
+  TEXT
+}
+
+enum DocumentStatus {
+  PROCESSING
+  AVAILABLE
+  ERROR
+}
+
+model DocumentChunk {
+  id         String   @id @default(cuid())
+  documentId String
+  content    String
+  embedding  Bytes?
+  chunkIndex Int
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// Call Session (通話ログ)
+// ============================================================
+
+model CallSession {
+  id              String     @id @default(cuid())
+  companyId       String
+  phoneNumberId   String?
+  callFlowId      String?
+  callerNumber    String?
+  startedAt       DateTime
+  endedAt         DateTime?
+  durationSeconds Int?
+  result          CallResult @default(AI_RESOLVED)
+  category        String?
+  isAiHandled     Boolean    @default(true)
+  callbackNeeded  Boolean    @default(false)
+  recordingUrl    String?
+  operatorNote    String?
+  createdAt       DateTime   @default(now())
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  phoneNumber PhoneNumber? @relation(fields: [phoneNumberId], references: [id])
+  callFlow    CallFlow?    @relation(fields: [callFlowId], references: [id])
+  transcripts CallTranscript[]
+  summaries   CallSummary[]
+  sessionFaqs CallSessionFaq[]
+  sessionDocs CallSessionDocument[]
+}
+
+enum CallResult {
+  AI_RESOLVED
+  TRANSFERRED
+  CALLBACK_REQUESTED
+  NO_ANSWER
+  VOICEMAIL
+}
+
+model CallTranscript {
+  id            String   @id @default(cuid())
+  callSessionId String
+  speaker       String
+  content       String
+  timestamp     Float
+  createdAt     DateTime @default(now())
+
+  callSession CallSession @relation(fields: [callSessionId], references: [id], onDelete: Cascade)
+}
+
+model CallSummary {
+  id            String   @id @default(cuid())
+  callSessionId String   @unique
+  summary       String
+  extractedData Json?
+  sentiment     String?
+  createdAt     DateTime @default(now())
+
+  callSession CallSession @relation(fields: [callSessionId], references: [id], onDelete: Cascade)
+}
+
+model CallSessionFaq {
+  id            String @id @default(cuid())
+  callSessionId String
+  faqId         String
+
+  callSession CallSession @relation(fields: [callSessionId], references: [id], onDelete: Cascade)
+  faq         FAQ         @relation(fields: [faqId], references: [id], onDelete: Cascade)
+
+  @@unique([callSessionId, faqId])
+}
+
+model CallSessionDocument {
+  id            String @id @default(cuid())
+  callSessionId String
+  documentId    String
+
+  callSession CallSession @relation(fields: [callSessionId], references: [id], onDelete: Cascade)
+  document    Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([callSessionId, documentId])
+}
+
+// ============================================================
+// Notification Setting
+// ============================================================
+
+model NotificationSetting {
+  id         String           @id @default(cuid())
+  companyId  String
+  type       NotificationType
+  target     String
+  conditions String[]
+  template   String?
+  isActive   Boolean          @default(true)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+enum NotificationType {
+  EMAIL
+  SLACK
+  WEBHOOK
+}
+
+// ============================================================
+// Plan & Billing
+// ============================================================
+
+model Plan {
+  id                     String   @id @default(cuid())
+  name                   String
+  type                   PlanType @unique
+  priceMonthly           Int
+  maxPhoneNumbers        Int
+  maxMinutesPerMonth     Int
+  maxFaqs                Int
+  hasMultipleFlows       Boolean  @default(false)
+  hasSlackNotification   Boolean  @default(false)
+  hasMemberManagement    Boolean  @default(false)
+  hasTransfer            Boolean  @default(false)
+  hasAdvancedConditions  Boolean  @default(false)
+  hasExternalIntegration Boolean  @default(false)
+  hasPrioritySupport     Boolean  @default(false)
+  hasDedicatedEnv        Boolean  @default(false)
+  isActive               Boolean  @default(true)
+  createdAt              DateTime @default(now())
+
+  subscriptions Subscription[]
+}
+
+enum PlanType {
+  TRIAL
+  STARTER
+  BUSINESS
+  PRO
+  ENTERPRISE
+}
+
+model Subscription {
+  id                 String             @id @default(cuid())
+  companyId          String             @unique
+  planId             String
+  status             SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean            @default(false)
+  extraPhoneNumbers  Int                @default(0)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  plan    Plan    @relation(fields: [planId], references: [id])
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  INACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+model UsageRecord {
+  id               String   @id @default(cuid())
+  companyId        String
+  year             Int
+  month            Int
+  totalCalls       Int      @default(0)
+  totalMinutes     Int      @default(0)
+  aiResolvedCount  Int      @default(0)
+  transferredCount Int      @default(0)
+  extraMinutes     Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, year, month])
+}
+
+model Invoice {
+  id        String        @id @default(cuid())
+  companyId String
+  year      Int
+  month     Int
+  subtotal  Int
+  tax       Int
+  total     Int
+  status    InvoiceStatus @default(DRAFT)
+  dueDate   DateTime?
+  paidAt    DateTime?
+  lineItems Json
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, year, month])
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
