@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
 
 export class AnswerQuestionDto {
   @IsString()
@@ -13,4 +13,9 @@ export class AnswerQuestionDto {
   @IsOptional()
   @IsString()
   callSessionId?: string;
+
+  // true にすると参考資料（DOCUMENT）のみを検索し、FAQとBedrockは参照しない
+  @IsOptional()
+  @IsBoolean()
+  documentOnly?: boolean;
 }

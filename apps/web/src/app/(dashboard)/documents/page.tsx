@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Upload, FileText, Globe, AlignLeft, RefreshCw, AlertCircle, CheckCircle } from "lucide-react";
+import { Upload, FileText, Globe, AlignLeft, X } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,12 +20,6 @@ const typeIcons: Record<string, React.ReactNode> = {
   TEXT: <AlignLeft className="w-5 h-5 text-green-500" />,
 };
 
-const statusConfig: Record<string, { label: string; variant: "success" | "warning" | "destructive"; icon: React.ReactNode }> = {
-  AVAILABLE: { label: "利用可能", variant: "success", icon: <CheckCircle className="w-3.5 h-3.5" /> },
-  PROCESSING: { label: "処理中", variant: "warning", icon: <RefreshCw className="w-3.5 h-3.5 animate-spin" /> },
-  ERROR: { label: "エラー", variant: "destructive", icon: <AlertCircle className="w-3.5 h-3.5" /> },
-};
-
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,6 +30,8 @@ export default function DocumentsPage() {
   const [answer, setAnswer] = useState<string | null>(null);
   const [sources, setSources] = useState<AiSource[]>([]);
   const [answering, setAnswering] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchDocuments = useCallback(async () => {
     const id = getCompanyId();
@@ -59,13 +55,17 @@ export default function DocumentsPage() {
 
   useEffect(() => { fetchDocuments(); }, [fetchDocuments]);
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("この資料を削除しますか？")) return;
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await documentsApi.remove(id);
+      await documentsApi.remove(deleteTarget.id);
+      setDeleteTarget(null);
       await fetchDocuments();
     } catch (err) {
       setError(err instanceof Error ? err.message : "削除に失敗しました");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -77,7 +77,8 @@ export default function DocumentsPage() {
     setError(null);
 
     try {
-      const res = await aiApi.answer({ companyId, question });
+      // 参考資料管理ページではドキュメントのみを参照して回答する
+      const res = await aiApi.answer({ companyId, question, documentOnly: true });
       setAnswer(res.data.answer);
       setSources(res.data.sources);
     } catch (err) {
@@ -120,7 +121,7 @@ export default function DocumentsPage() {
               <div>
                 <h2 className="text-sm font-semibold text-gray-900">AI回答テスト</h2>
                 <p className="text-xs text-gray-500 mt-1">
-                  FAQ・参考資料・Bedrock Knowledge Baseを参照して回答します
+                  登録済みの参考資料を参照して回答します
                 </p>
               </div>
               <Button onClick={handleAnswer} disabled={!question.trim() || answering}>
@@ -157,51 +158,49 @@ export default function DocumentsPage() {
         )}
 
         <div className="grid gap-4">
-          {documents.map((doc) => {
-            const status = statusConfig[doc.status];
-            return (
-              <Card key={doc.id}>
-                <CardContent className="p-5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center">
-                        {typeIcons[doc.type]}
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-gray-900 mb-1">{doc.name}</p>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="secondary">{doc.type}</Badge>
-                          <Badge variant={status.variant} className="flex items-center gap-1">
-                            {status.icon}
-                            {status.label}
-                          </Badge>
-                        </div>
-                      </div>
+          {documents.map((doc) => (
+            <Card key={doc.id}>
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center">
+                      {typeIcons[doc.type]}
                     </div>
-                    <div className="flex items-center gap-8 text-right">
-                      <div>
-                        <p className="text-xs text-gray-400 mb-1">使用フロー</p>
-                        <p className="text-sm text-gray-700">
-                          {doc.usedInFlows.length > 0 ? doc.usedInFlows.join(", ") : "未使用"}
-                        </p>
+                    <div>
+                      <p className="text-sm font-medium text-gray-900 mb-1">{doc.name}</p>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary">{doc.type}</Badge>
                       </div>
-                      <div>
-                        <p className="text-xs text-gray-400 mb-1">最終更新</p>
-                        <p className="text-sm text-gray-700">
-                          {new Date(doc.updatedAt).toLocaleDateString("ja-JP")}
-                        </p>
-                      </div>
-                      <Button variant="outline" size="sm" onClick={() => handleDelete(doc.id)}>
-                        削除
-                      </Button>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+                  <div className="flex items-center gap-8 text-right">
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">使用フロー</p>
+                      <p className="text-sm text-gray-700">
+                        {doc.usedInFlows.length > 0 ? doc.usedInFlows.join(", ") : "未使用"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">最終更新</p>
+                      <p className="text-sm text-gray-700">
+                        {new Date(doc.updatedAt).toLocaleDateString("ja-JP")}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDeleteTarget({ id: doc.id, name: doc.name })}
+                    >
+                      削除
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       </main>
+
       {companyId && modalType && (
         <DocumentModal
           companyId={companyId}
@@ -209,6 +208,33 @@ export default function DocumentsPage() {
           onClose={() => setModalType(null)}
           onSaved={fetchDocuments}
         />
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-start justify-between">
+              <h2 className="text-sm font-semibold text-gray-900">資料を削除しますか？</h2>
+              <button
+                onClick={() => setDeleteTarget(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-sm text-gray-600">
+              <span className="font-medium text-gray-900">{deleteTarget.name}</span> を削除します。この操作は取り消せません。
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+                キャンセル
+              </Button>
+              <Button variant="destructive" onClick={handleDeleteConfirm} disabled={deleting}>
+                {deleting ? "削除中..." : "削除する"}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

@@ -1,8 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { DocumentStatus, DocumentType } from "@prisma/client";
-import { mkdirSync, writeFileSync } from "fs";
-import { join } from "path";
 import { PrismaService } from "../prisma/prisma.service";
+import { BedrockKnowledgeBaseService } from "../ai/bedrock-knowledge-base.service";
 import { CreateDocumentDto } from "./dto/create-document.dto";
 import { UpdateDocumentDto } from "./dto/update-document.dto";
 
@@ -11,7 +10,10 @@ const CHUNK_OVERLAP = 160;
 
 @Injectable()
 export class DocumentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly bedrock: BedrockKnowledgeBaseService,
+  ) {}
 
   /** 会社のドキュメント一覧を返す */
   async findAll(companyId: string) {
@@ -65,23 +67,21 @@ export class DocumentsService {
       file.originalname.toLowerCase().endsWith(".pdf");
     if (!isPdf) throw new BadRequestException("PDFファイルのみアップロードできます");
 
+    // レコードを先に作成して ID を確定する
     const doc = await this.prisma.document.create({
       data: {
         companyId,
         name: name?.trim() || file.originalname,
         type: DocumentType.PDF,
-        status: DocumentStatus.PROCESSING,
+        status: DocumentStatus.AVAILABLE,
       },
     });
 
-    const relativePath = join("uploads", "documents", companyId, `${doc.id}.pdf`);
-    const absolutePath = join(process.cwd(), relativePath);
-    mkdirSync(join(process.cwd(), "uploads", "documents", companyId), { recursive: true });
-    writeFileSync(absolutePath, file.buffer);
-
+    // S3 にアップロードして URL を保存（RAG 対象外のためテキスト抽出は行わない）
+    const s3Uri = await this.bedrock.uploadPdfToS3(doc.id, companyId, file.buffer);
     const updated = await this.prisma.document.update({
       where: { id: doc.id },
-      data: { url: relativePath.replace(/\\/g, "/") },
+      data: { url: s3Uri },
     });
 
     return { data: updated };
@@ -134,7 +134,12 @@ export class DocumentsService {
     const existing = await this.prisma.document.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException("ドキュメントが見つかりません");
 
+    // DB から削除し、PDF の場合は S3 からも削除する
     await this.prisma.document.delete({ where: { id } });
+    if (existing.type === DocumentType.PDF) {
+      await this.bedrock.deletePdfFromS3(id, existing.companyId);
+    }
+
     return { data: { message: "ドキュメントを削除しました" } };
   }
 
@@ -160,8 +165,9 @@ export class DocumentsService {
       }
     }
 
+    // PDF は uploadPdf() 側で処理するためここでは何もしない
     if (type === DocumentType.PDF && !body) {
-      status = DocumentStatus.PROCESSING;
+      status = DocumentStatus.ERROR;
     }
 
     return {

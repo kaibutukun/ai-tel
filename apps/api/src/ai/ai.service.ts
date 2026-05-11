@@ -25,9 +25,11 @@ export class AiService {
 
   async answer(dto: AnswerQuestionDto) {
     const question = dto.question.trim();
+
+    // documentOnly=true のとき参考資料のみ検索し、FAQとBedrockはスキップ
     const [localSources, bedrockSources] = await Promise.all([
-      this.searchLocalKnowledge(dto.companyId, question),
-      this.retrieveFromBedrock(question),
+      this.searchLocalKnowledge(dto.companyId, question, dto.documentOnly ?? false),
+      dto.documentOnly ? Promise.resolve([]) : this.retrieveFromBedrock(question),
     ]);
 
     const sources = [...bedrockSources, ...localSources].slice(0, 8);
@@ -47,15 +49,18 @@ export class AiService {
     };
   }
 
-  private async searchLocalKnowledge(companyId: string, question: string) {
+  private async searchLocalKnowledge(companyId: string, question: string, documentOnly = false) {
     const terms = this.tokenize(question);
 
+    // documentOnly=true のときは FAQ を取得しない
     const [faqs, chunks] = await Promise.all([
-      this.prisma.fAQ.findMany({
-        where: { companyId, isActive: true },
-        orderBy: [{ updatedAt: "desc" }],
-        take: 80,
-      }),
+      documentOnly
+        ? Promise.resolve([])
+        : this.prisma.fAQ.findMany({
+            where: { companyId, isActive: true },
+            orderBy: [{ updatedAt: "desc" }],
+            take: 80,
+          }),
       this.prisma.documentChunk.findMany({
         where: {
           document: {
@@ -112,17 +117,22 @@ export class AiService {
 
       return (response.retrievalResults ?? [])
         .map<KnowledgeSource | null>((result, index) => {
-          const content = result.content?.text?.trim();
-          if (!content) return null;
+          const question = result.content?.text?.trim();
+          if (!question) return null;
 
-          const uri =
-            result.location?.s3Location?.uri ??
-            result.location?.webLocation?.url ??
-            result.location?.customDocumentLocation?.id;
+          // FAQ は質問だけをベクトル化しているので、回答はメタデータから取り出す
+          type MetaVal = { stringValue?: string };
+          const meta = result.metadata as Record<string, MetaVal> | undefined;
+          const answer = meta?.["answer"]?.stringValue;
+          const category = meta?.["category"]?.stringValue;
+          const content = answer
+            ? `質問: ${question}\n回答: ${answer}`
+            : question;
+          const title = category ? `FAQ（${category}）` : `Bedrock Knowledge Base ${index + 1}`;
 
           return {
             type: "BEDROCK",
-            title: uri ?? `Bedrock Knowledge Base ${index + 1}`,
+            title,
             content,
             score: result.score,
           };
