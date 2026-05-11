@@ -7,5 +7,7 @@ import { AiService } from "./ai.service";
   imports: [PrismaModule],
   controllers: [AiController],
   providers: [AiService],
+  // RealtimeModule の ToolExecutorService から AiService を利用するため export
+  exports: [AiService],
 })
 export class AiModule {}

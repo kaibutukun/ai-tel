@@ -34,7 +34,11 @@ export class TwilioService {
 
   /**
    * 着信時に Twilio へ返す TwiML を組み立てる。
-   * 現時点では「番号設定に応じた音声応答・任意転送」までを担当し、AI 会話実行は次段階で接続する。
+   *
+   * AI 応答を有効化したフェーズでは、TwiML で `<Connect><Stream>` を返し、
+   * Twilio の Media Streams を WebSocket でこのサーバー (RealtimeService) に
+   * 中継させる。実際の会話制御は RealtimeBridge が OpenAI Realtime API
+   * と直結して行う。
    */
   async buildIncomingVoiceResponse(body: TwilioFormBody): Promise<string> {
     const response = new twilio.twiml.VoiceResponse();
@@ -79,20 +83,37 @@ export class TwilioService {
       return response.toString();
     }
 
-    if (phoneNumber.transferTo) {
+    // フローが設定されていない or 強制的に転送先が指定されている場合は従来通り転送。
+    // （AI を介さず直結したい番号はこちらの分岐を使う想定）
+    if (phoneNumber.transferTo && !phoneNumber.callFlowId) {
       response.say({ language: "ja-JP" }, "お電話ありがとうございます。担当者におつなぎします。");
       response.dial({ callerId: phoneNumber.number }, phoneNumber.transferTo);
       return response.toString();
     }
 
-    const flowName = phoneNumber.callFlow?.name;
-    response.say(
-      { language: "ja-JP" },
-      flowName
-        ? `お電話ありがとうございます。${flowName}で受付しました。現在、AI応答の接続準備中です。`
-        : "お電話ありがとうございます。現在、AI応答の接続準備中です。"
-    );
-    response.hangup();
+    // ────────── AI 応答経路 ──────────
+    // Twilio Media Streams をこのサーバーへ繋ぎ、OpenAI Realtime と双方向音声する。
+    const wsUrl = this.buildMediaStreamUrl(phoneNumber.id, callSid);
+    if (!wsUrl) {
+      // 公開 WSS URL が解決できない場合は安全側に倒して案内アナウンスのみ
+      const flowName = phoneNumber.callFlow?.name;
+      response.say(
+        { language: "ja-JP" },
+        flowName
+          ? `お電話ありがとうございます。${flowName}で受付しました。現在、AI応答の接続準備中です。`
+          : "お電話ありがとうございます。現在、AI応答の接続準備中です。"
+      );
+      response.hangup();
+      return response.toString();
+    }
+
+    const connect = response.connect();
+    const stream = connect.stream({ url: wsUrl });
+    // <Stream> の Parameter として番号ID等を渡す（クエリ取得失敗時のフォールバック）
+    stream.parameter({ name: "phoneNumberId", value: phoneNumber.id });
+    if (phoneNumber.companyId) stream.parameter({ name: "companyId", value: phoneNumber.companyId });
+    if (phoneNumber.callFlowId) stream.parameter({ name: "flowId", value: phoneNumber.callFlowId });
+    if (callSid) stream.parameter({ name: "callSid", value: callSid });
     return response.toString();
   }
 
@@ -192,5 +213,23 @@ export class TwilioService {
     const forwardedProto = req.header("x-forwarded-proto");
     const protocol = forwardedProto ?? req.protocol;
     return `${protocol}://${req.get("host")}${req.originalUrl}`;
+  }
+
+  /**
+   * Twilio Media Streams の <Stream url="..."> に渡す WebSocket URL を組み立てる。
+   * TWILIO_WEBHOOK_BASE_URL (https://...) を wss:// に置換し、media-stream パスを足す。
+   * 環境変数が未設定の場合は null を返す（呼び出し側で別経路へフォールバック）。
+   */
+  private buildMediaStreamUrl(phoneNumberId: string, callSid?: string): string | null {
+    const baseUrl = process.env.TWILIO_WEBHOOK_BASE_URL?.replace(/\/$/, "");
+    if (!baseUrl) return null;
+    const wsBase = baseUrl
+      .replace(/^http:\/\//i, "ws://")
+      .replace(/^https:\/\//i, "wss://");
+
+    const params = new URLSearchParams();
+    params.set("phoneNumberId", phoneNumberId);
+    if (callSid) params.set("callSid", callSid);
+    return `${wsBase}/twilio/media-stream?${params.toString()}`;
   }
 }

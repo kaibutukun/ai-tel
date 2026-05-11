@@ -264,7 +264,7 @@ export function FlowEditor({
                 case "message": return "#3b82f6";
                 case "condition": return "#f59e0b";
                 case "end": return "#ef4444";
-                default: return "#8b5cf6";
+                default: return "#6366f1";
               }
             }}
             className="!shadow-md !rounded-lg !border !border-gray-200"

@@ -6,13 +6,28 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { AnswerQuestionDto } from "./dto/answer-question.dto";
 
+// ─────────────────────────────────────────────────────────────
+// AiService
+//
+// 知識源は AWS Bedrock Knowledge Base 一本に統一。
+// 旧実装にあったローカル lexical 検索 (Postgres から FAQ/DocumentChunk を
+// 引いてトークン一致でスコアリング) は廃止。
+//
+// 流れ:
+//   1. クエリ → Bedrock RetrieveCommand で vector 検索
+//   2. minScore 未満の結果は捨てる（ノードの "正確さ" パラメータで制御）
+//   3. 残った sources を context として OpenAI に渡し、最終回答文を生成
+// ─────────────────────────────────────────────────────────────
+
 interface KnowledgeSource {
-  type: "FAQ" | "DOCUMENT" | "BEDROCK";
+  type: "BEDROCK";
   id?: string;
   title: string;
   content: string;
   score?: number;
 }
+
+const DEFAULT_MIN_SCORE = 0.7;
 
 @Injectable()
 export class AiService {
@@ -25,14 +40,14 @@ export class AiService {
 
   async answer(dto: AnswerQuestionDto) {
     const question = dto.question.trim();
+    const minScore = dto.minScore ?? DEFAULT_MIN_SCORE;
 
-    // documentOnly=true のとき参考資料のみ検索し、FAQとBedrockはスキップ
-    const [localSources, bedrockSources] = await Promise.all([
-      this.searchLocalKnowledge(dto.companyId, question, dto.documentOnly ?? false),
-      dto.documentOnly ? Promise.resolve([]) : this.retrieveFromBedrock(question),
-    ]);
+    // Bedrock は最大10件取りに行き、minScore でフィルタする
+    const all = await this.retrieveFromBedrock(question, 10);
+    const sources = all
+      .filter((s) => (s.score ?? 0) >= minScore)
+      .slice(0, 8);
 
-    const sources = [...bedrockSources, ...localSources].slice(0, 8);
     const answer = await this.generateAnswer(question, sources);
 
     return {
@@ -49,56 +64,12 @@ export class AiService {
     };
   }
 
-  private async searchLocalKnowledge(companyId: string, question: string, documentOnly = false) {
-    const terms = this.tokenize(question);
-
-    // documentOnly=true のときは FAQ を取得しない
-    const [faqs, chunks] = await Promise.all([
-      documentOnly
-        ? Promise.resolve([])
-        : this.prisma.fAQ.findMany({
-            where: { companyId, isActive: true },
-            orderBy: [{ updatedAt: "desc" }],
-            take: 80,
-          }),
-      this.prisma.documentChunk.findMany({
-        where: {
-          document: {
-            companyId,
-            status: "AVAILABLE",
-          },
-        },
-        include: {
-          document: { select: { id: true, name: true, type: true } },
-        },
-        orderBy: { createdAt: "desc" },
-        take: 200,
-      }),
-    ]);
-
-    const faqSources = faqs.map<KnowledgeSource>((faq) => ({
-      type: "FAQ",
-      id: faq.id,
-      title: faq.question,
-      content: `質問: ${faq.question}\n回答: ${faq.answer}`,
-      score: this.scoreText(`${faq.question} ${faq.answer} ${faq.category ?? ""}`, terms),
-    }));
-
-    const documentSources = chunks.map<KnowledgeSource>((chunk) => ({
-      type: "DOCUMENT",
-      id: chunk.document.id,
-      title: chunk.document.name,
-      content: chunk.content,
-      score: this.scoreText(`${chunk.document.name} ${chunk.content}`, terms),
-    }));
-
-    return [...faqSources, ...documentSources]
-      .filter((source) => (source.score ?? 0) > 0)
-      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-      .slice(0, 6);
-  }
-
-  private async retrieveFromBedrock(question: string): Promise<KnowledgeSource[]> {
+  /**
+   * Bedrock Knowledge Base から類似度の高い chunks を取得する。
+   * Bedrock 側で「クエリのエンベディング → 内蔵 vector DB で類似検索」を行うため、
+   * こちらのアプリ側でのエンベディング処理は不要。
+   */
+  private async retrieveFromBedrock(question: string, numResults = 10): Promise<KnowledgeSource[]> {
     const knowledgeBaseId = process.env.BEDROCK_KNOWLEDGE_BASE_ID;
     if (!this.bedrockClient || !knowledgeBaseId) return [];
 
@@ -108,27 +79,23 @@ export class AiService {
           knowledgeBaseId,
           retrievalQuery: { text: question },
           retrievalConfiguration: {
-            vectorSearchConfiguration: {
-              numberOfResults: 5,
-            },
+            vectorSearchConfiguration: { numberOfResults: numResults },
           },
         })
       );
 
       return (response.retrievalResults ?? [])
         .map<KnowledgeSource | null>((result, index) => {
-          const question = result.content?.text?.trim();
-          if (!question) return null;
+          const text = result.content?.text?.trim();
+          if (!text) return null;
 
-          // FAQ は質問だけをベクトル化しているので、回答はメタデータから取り出す
+          // FAQ を Bedrock に入れている場合、answer / category がメタデータに入る
           type MetaVal = { stringValue?: string };
           const meta = result.metadata as Record<string, MetaVal> | undefined;
           const answer = meta?.["answer"]?.stringValue;
           const category = meta?.["category"]?.stringValue;
-          const content = answer
-            ? `質問: ${question}\n回答: ${answer}`
-            : question;
-          const title = category ? `FAQ（${category}）` : `Bedrock Knowledge Base ${index + 1}`;
+          const content = answer ? `質問: ${text}\n回答: ${answer}` : text;
+          const title = category ? `FAQ（${category}）` : `参考資料 ${index + 1}`;
 
           return {
             type: "BEDROCK",
@@ -143,9 +110,10 @@ export class AiService {
     }
   }
 
+  /** 取得した sources を OpenAI に渡して短い自然な回答文を作る */
   private async generateAnswer(question: string, sources: KnowledgeSource[]) {
     if (sources.length === 0) {
-      return "関連する情報が見つかりませんでした。登録済みのFAQまたは参考資料を確認してください。";
+      return "関連する情報が見つかりませんでした。登録済みの参考資料を確認してください。";
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
@@ -169,7 +137,7 @@ export class AiService {
             {
               role: "system",
               content:
-                "あなたは電話自動応答AIです。与えられた社内FAQ・資料の範囲だけで、短く自然な日本語で回答してください。不明な場合は不明と伝え、推測しないでください。",
+                "あなたは電話自動応答AIです。与えられた参考資料の範囲だけで、短く自然な日本語で回答してください。不明な場合は不明と伝え、推測しないでください。",
             },
             {
               role: "user",
@@ -190,51 +158,9 @@ export class AiService {
     }
   }
 
+  /** OpenAI が使えない場合のフォールバック: 最も類似度の高い source をそのまま返す */
   private contextOnlyAnswer(sources: KnowledgeSource[]) {
     const top = sources[0];
     return top.content.length > 600 ? `${top.content.slice(0, 600)}...` : top.content;
-  }
-
-  private tokenize(text: string) {
-    const normalized = text
-      .toLowerCase()
-      .replace(/[、。,.!?！？「」『』（）()[\]{}:：;；/\\|]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    const terms = new Set(
-      normalized
-        .split(" ")
-        .map((term) => term.trim())
-        .filter((term) => term.length >= 2)
-    );
-
-    const compact = normalized
-      .replace(/\s+/g, "")
-      .replace(/教えてください|教えて|ください|ですか|ますか|について/g, "");
-
-    if (compact.length >= 2) {
-      terms.add(compact);
-      for (const size of [2, 3, 4]) {
-        for (let i = 0; i <= compact.length - size; i += 1) {
-          terms.add(compact.slice(i, i + size));
-        }
-      }
-    }
-
-    return Array.from(terms);
-  }
-
-  private scoreText(text: string, terms: string[]) {
-    if (terms.length === 0) return 1;
-    const lower = text
-      .toLowerCase()
-      .replace(/[、。,.!?！？「」『』（）()[\]{}:：;；/\\|]/g, " ")
-      .replace(/\s+/g, "");
-
-    return terms.reduce((score, term) => {
-      if (!lower.includes(term.replace(/\s+/g, ""))) return score;
-      return score + Math.max(1, Math.min(term.length, 6));
-    }, 0);
   }
 }

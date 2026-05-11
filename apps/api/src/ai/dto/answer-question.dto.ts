@@ -1,4 +1,12 @@
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
+import {
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from "class-validator";
 
 export class AnswerQuestionDto {
   @IsString()
@@ -14,8 +22,13 @@ export class AnswerQuestionDto {
   @IsString()
   callSessionId?: string;
 
-  // true にすると参考資料（DOCUMENT）のみを検索し、FAQとBedrockは参照しない
+  /**
+   * Bedrock の vector search 結果に対する類似度の下限。0.5〜0.9。
+   * 指定しなければ 0.7（中央値）相当。
+   */
   @IsOptional()
-  @IsBoolean()
-  documentOnly?: boolean;
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  minScore?: number;
 }

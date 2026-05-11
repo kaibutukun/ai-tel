@@ -7,10 +7,10 @@ import {
   HelpCircle,
   Search,
   PhoneForwarded,
-  PhoneCall,
   Bell,
   ClipboardList,
 } from "lucide-react";
+import { FAQ_PRECISION_DEFAULT } from "./types";
 
 interface PaletteItem {
   type: string;
@@ -25,26 +25,28 @@ const PALETTE_ITEMS: PaletteItem[] = [
   {
     type: "message",
     label: "AIメッセージ",
-    description: "AIが発話するメッセージ",
+    description: "AIに伝えさせたい内容",
     icon: <MessageSquare className="w-4 h-4" />,
     color: "border-blue-300 bg-blue-50 text-blue-700",
-    defaultData: { message: "こちらにメッセージを入力してください。" },
+    // 既定は loose（おおざっぱ）。LLM が文脈に応じて言い回し調整できる。
+    defaultData: { message: "こちらにメッセージを入力してください。", strictness: "loose" },
   },
   {
     type: "condition",
     label: "条件分岐",
-    description: "用件や入力で分岐",
+    description: "用件や状況で分岐",
     icon: <GitBranch className="w-4 h-4" />,
     color: "border-amber-300 bg-amber-50 text-amber-700",
     defaultData: { description: "ご用件は何ですか？", conditions: ["分岐A", "分岐B"] },
   },
+  // ── actionType ごとに別パレット項目として並べる（種別ドロップダウンは廃止）
   {
     type: "action",
     label: "FAQ回答",
     description: "登録FAQから回答",
     icon: <HelpCircle className="w-4 h-4" />,
     color: "border-cyan-300 bg-cyan-50 text-cyan-700",
-    defaultData: { actionType: "faq" },
+    defaultData: { actionType: "faq", precision: FAQ_PRECISION_DEFAULT },
   },
   {
     type: "action",
@@ -69,14 +71,6 @@ const PALETTE_ITEMS: PaletteItem[] = [
     icon: <PhoneForwarded className="w-4 h-4" />,
     color: "border-orange-300 bg-orange-50 text-orange-700",
     defaultData: { actionType: "transfer", target: "" },
-  },
-  {
-    type: "action",
-    label: "折り返し受付",
-    description: "折り返し連絡を受け付ける",
-    icon: <PhoneCall className="w-4 h-4" />,
-    color: "border-pink-300 bg-pink-50 text-pink-700",
-    defaultData: { actionType: "callback" },
   },
   {
     type: "action",

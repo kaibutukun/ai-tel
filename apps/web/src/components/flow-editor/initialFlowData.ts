@@ -1,5 +1,9 @@
 import { Node, Edge, MarkerType } from "reactflow";
+import { FAQ_PRECISION_DEFAULT } from "./types";
 
+// 新しいフローの初期テンプレート。
+// AIは全体の流れを「指針」として読み、自然に会話する。
+// ここでは骨組みだけを置き、細かい台詞は最小限。
 export const initialNodes: Node[] = [
   {
     id: "start",
@@ -8,6 +12,8 @@ export const initialNodes: Node[] = [
     data: {},
     deletable: false,
   },
+
+  // ── 開幕の固定挨拶（コンプラ要件等で一字一句固定したい場合の例）
   {
     id: "greeting",
     type: "message",
@@ -15,8 +21,11 @@ export const initialNodes: Node[] = [
     data: {
       message:
         "お電話ありがとうございます。AIアシスタントのアイテルです。ご用件をお聞かせください。",
+      strictness: "locked",
     },
   },
+
+  // ── 条件分岐
   {
     id: "main-cond",
     type: "condition",
@@ -26,7 +35,8 @@ export const initialNodes: Node[] = [
       conditions: ["予約", "問い合わせ", "クレーム", "その他"],
     },
   },
-  // ── 予約ブランチ
+
+  // ── 予約ブランチ: 情報収集 → 通知 → 終了
   {
     id: "collect-booking",
     type: "action",
@@ -46,14 +56,15 @@ export const initialNodes: Node[] = [
     id: "end-booking",
     type: "end",
     position: { x: -60, y: 800 },
-    data: { endMessage: "予約内容を承りました。後ほどご連絡いたします。" },
+    data: { endMessage: "ご予約内容を承りました。お電話ありがとうございました。" },
   },
-  // ── 問い合わせブランチ
+
+  // ── 問い合わせブランチ: FAQ → 資料検索 → 終了
   {
     id: "faq-inquiry",
     type: "action",
     position: { x: 205, y: 500 },
-    data: { actionType: "faq" },
+    data: { actionType: "faq", precision: FAQ_PRECISION_DEFAULT },
   },
   {
     id: "rag-inquiry",
@@ -65,42 +76,32 @@ export const initialNodes: Node[] = [
     id: "end-inquiry",
     type: "end",
     position: { x: 205, y: 800 },
-    data: { endMessage: "ご不明点は解決しましたでしょうか？ありがとうございました。" },
+    data: { endMessage: "他にご質問はございませんか？ありがとうございました。" },
   },
-  // ── クレームブランチ
+
+  // ── クレームブランチ: 即転送
   {
     id: "transfer-complaint",
     type: "action",
     position: { x: 500, y: 500 },
     data: { actionType: "transfer", target: "090-1111-2222" },
   },
-  {
-    id: "end-complaint",
-    type: "end",
-    position: { x: 500, y: 650 },
-    data: { endMessage: "担当者にお繋ぎしました。大変失礼いたしました。" },
-  },
-  // ── その他ブランチ
+
+  // ── その他ブランチ: 情報収集 → 終了（折り返し連絡前提）
   {
     id: "collect-other",
     type: "action",
-    position: { x: 780, y: 500 },
+    position: { x: 770, y: 500 },
     data: {
       actionType: "collect",
       fields: ["お名前", "ご連絡先", "ご用件"],
     },
   },
   {
-    id: "callback-other",
-    type: "action",
-    position: { x: 780, y: 650 },
-    data: { actionType: "callback" },
-  },
-  {
     id: "end-other",
     type: "end",
-    position: { x: 780, y: 800 },
-    data: { endMessage: "折り返しのご連絡をお待ちください。" },
+    position: { x: 770, y: 650 },
+    data: { endMessage: "担当者より折り返しご連絡いたします。お電話ありがとうございました。" },
   },
 ];
 
@@ -114,7 +115,7 @@ export const initialEdges: Edge[] = [
   { ...edgeDefaults, id: "e-start-greeting", source: "start", target: "greeting" },
   { ...edgeDefaults, id: "e-greeting-cond", source: "greeting", target: "main-cond" },
 
-  // 条件分岐 → 各ブランチ（labelでハンドルを識別）
+  // 条件分岐 → 各ブランチ
   {
     ...edgeDefaults,
     id: "e-cond-booking",
@@ -156,18 +157,14 @@ export const initialEdges: Edge[] = [
     labelBgStyle: { fill: "#fef3c7", rx: 4 },
   },
 
-  // 予約ブランチ
-  { ...edgeDefaults, id: "e-collect-notify", source: "collect-booking", target: "notify-booking" },
-  { ...edgeDefaults, id: "e-notify-end1", source: "notify-booking", target: "end-booking" },
+  // 予約 → 通知 → 終了
+  { ...edgeDefaults, id: "e-booking-notify", source: "collect-booking", target: "notify-booking" },
+  { ...edgeDefaults, id: "e-notify-end", source: "notify-booking", target: "end-booking" },
 
-  // 問い合わせブランチ
+  // 問い合わせ → FAQ → RAG → 終了
   { ...edgeDefaults, id: "e-faq-rag", source: "faq-inquiry", target: "rag-inquiry", label: "未回答", labelStyle: { fontSize: 10 }, labelBgStyle: { fill: "#f0f9ff", rx: 3 } },
-  { ...edgeDefaults, id: "e-rag-end2", source: "rag-inquiry", target: "end-inquiry" },
+  { ...edgeDefaults, id: "e-rag-end", source: "rag-inquiry", target: "end-inquiry" },
 
-  // クレームブランチ
-  { ...edgeDefaults, id: "e-transfer-end3", source: "transfer-complaint", target: "end-complaint" },
-
-  // その他ブランチ
-  { ...edgeDefaults, id: "e-collect-cb", source: "collect-other", target: "callback-other" },
-  { ...edgeDefaults, id: "e-cb-end4", source: "callback-other", target: "end-other" },
+  // その他 → 終了
+  { ...edgeDefaults, id: "e-other-end", source: "collect-other", target: "end-other" },
 ];

@@ -1,7 +1,7 @@
 import { apiClient } from "./client";
 
 export interface AiSource {
-  type: "FAQ" | "DOCUMENT" | "BEDROCK";
+  type: "BEDROCK";
   id?: string;
   title: string;
   score?: number;
@@ -16,7 +16,7 @@ interface AnswerResponse {
 }
 
 export const aiApi = {
-  // documentOnly=true を渡すと参考資料（DOCUMENT）のみを検索源にする
-  answer: (data: { companyId: string; question: string; documentOnly?: boolean }) =>
+  // minScore を渡すと類似度の閾値を上書きできる（フロー側の rag 精度設定に合わせる用途）
+  answer: (data: { companyId: string; question: string; minScore?: number }) =>
     apiClient.post<AnswerResponse>("/ai/answer", data),
 };

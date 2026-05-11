@@ -77,8 +77,7 @@ export default function DocumentsPage() {
     setError(null);
 
     try {
-      // 参考資料管理ページではドキュメントのみを参照して回答する
-      const res = await aiApi.answer({ companyId, question, documentOnly: true });
+      const res = await aiApi.answer({ companyId, question });
       setAnswer(res.data.answer);
       setSources(res.data.sources);
     } catch (err) {

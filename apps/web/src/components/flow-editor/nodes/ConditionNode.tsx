@@ -25,8 +25,11 @@ function ConditionNode({ data, selected }: NodeProps<ConditionNodeData>) {
         </span>
       </div>
       <div className="px-4 py-3 pb-6">
-        <p className="text-xs text-gray-500 mb-2">
+        <p className="text-xs text-gray-500 mb-1">
           {data.description || "ユーザーの用件を分類"}
+        </p>
+        <p className="text-[10px] text-amber-600/70 italic mb-2">
+          AIが会話の流れで判断
         </p>
         <div className="flex flex-wrap gap-1">
           {conditions.map((c, i) => (
