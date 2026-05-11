@@ -8,6 +8,8 @@ export interface PhoneNumber {
   callFlowId: string | null;
   callFlow: { id: string; name: string } | null;
   transferTo: string | null;
+  twilioSid: string | null;
+  provider: string;
   isActive: boolean;
   businessHours: BusinessHour[];
   createdAt: string;
@@ -31,6 +33,16 @@ export const phoneNumbersApi = {
 
   get: (id: string) =>
     apiClient.get<SingleResponse>(`/phone-numbers/${id}`),
+
+  create: (data: {
+    companyId: string;
+    number: string;
+    displayName?: string;
+    twilioSid?: string;
+    transferTo?: string;
+    isActive?: boolean;
+    callFlowId?: string;
+  }) => apiClient.post<SingleResponse>("/phone-numbers", data),
 
   update: (id: string, data: { displayName?: string; transferTo?: string; isActive?: boolean; callFlowId?: string }) =>
     apiClient.patch<SingleResponse>(`/phone-numbers/${id}`, data),

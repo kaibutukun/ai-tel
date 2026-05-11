@@ -19,6 +19,7 @@ import { AdminModule } from "./admin/admin.module";
 import { MembersModule } from "./members/members.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { AiModule } from "./ai/ai.module";
+import { TwilioModule } from "./twilio/twilio.module";
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { AiModule } from "./ai/ai.module";
     MembersModule,
     DashboardModule,
     AiModule,
+    TwilioModule,
   ],
   providers: [
     // グローバルガードとして登録（DI が正しく機能する）

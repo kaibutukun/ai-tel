@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { CreatePhoneNumberModal } from "@/components/phone-numbers/CreatePhoneNumberModal";
 import { phoneNumbersApi, type PhoneNumber } from "@/lib/api/phone-numbers";
 import { getCompanyId } from "@/lib/get-company-id";
 
@@ -24,6 +25,7 @@ function formatBusinessHours(hours: PhoneNumber["businessHours"]): string {
 export default function PhoneNumbersPage() {
   const [numbers, setNumbers] = useState<PhoneNumber[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   const fetchNumbers = useCallback(async () => {
     const companyId = getCompanyId();
@@ -47,6 +49,10 @@ export default function PhoneNumbersPage() {
     }
   };
 
+  const handleCreated = (phoneNumber: PhoneNumber) => {
+    setNumbers((prev) => [...prev, phoneNumber]);
+  };
+
   return (
     <>
       <Header title="電話番号管理" />
@@ -55,8 +61,7 @@ export default function PhoneNumbersPage() {
           <p className="text-sm text-gray-500">
             登録済み電話番号: {loading ? "—" : `${numbers.length} 件`}
           </p>
-          {/* 電話番号追加は Twilio コア側で行うため、現在は無効 */}
-          <Button disabled title="電話番号の追加はTwilio管理画面から行います">
+          <Button onClick={() => setShowCreateModal(true)}>
             <Plus className="w-4 h-4 mr-2" />電話番号を追加
           </Button>
         </div>
@@ -112,6 +117,14 @@ export default function PhoneNumbersPage() {
           ))}
         </div>
       </main>
+
+      {showCreateModal && (
+        <CreatePhoneNumberModal
+          companyId={getCompanyId()}
+          onClose={() => setShowCreateModal(false)}
+          onCreated={handleCreated}
+        />
+      )}
     </>
   );
 }

@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Patch,
   Param,
   Body,
@@ -8,6 +9,7 @@ import {
   BadRequestException,
 } from "@nestjs/common";
 import { PhoneNumbersService } from "./phone-numbers.service";
+import { CreatePhoneNumberDto } from "./dto/create-phone-number.dto";
 import { UpdatePhoneNumberDto } from "./dto/update-phone-number.dto";
 
 /**
@@ -15,9 +17,10 @@ import { UpdatePhoneNumberDto } from "./dto/update-phone-number.dto";
  *
  * GET   /api/phone-numbers?companyId=xxx  - 一覧
  * GET   /api/phone-numbers/:id            - 詳細（営業時間含む）
+ * POST  /api/phone-numbers                - Twilio取得済み番号の登録
  * PATCH /api/phone-numbers/:id            - 表示設定更新
  *
- * NOTE: 番号のプロビジョニング（追加・削除）は Twilio コア側で行う
+ * NOTE: 番号購入・本人確認・Webhook設定は Twilio Console で運営管理者が行う
  */
 @Controller("phone-numbers")
 export class PhoneNumbersController {
@@ -32,6 +35,11 @@ export class PhoneNumbersController {
   @Get(":id")
   findOne(@Param("id") id: string) {
     return this.phoneNumbersService.findOne(id);
+  }
+
+  @Post()
+  create(@Body() dto: CreatePhoneNumberDto) {
+    return this.phoneNumbersService.create(dto);
   }
 
   @Patch(":id")
