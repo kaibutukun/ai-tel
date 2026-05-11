@@ -24,6 +24,28 @@ export interface AdminStats {
   totalMinutes: number;
 }
 
+export interface AdminPhoneNumber {
+  id: string;
+  companyId: string | null;
+  number: string;
+  displayName: string | null;
+  twilioSid: string | null;
+  transferTo: string | null;
+  isActive: boolean;
+  createdAt: string;
+  company: { id: string; name: string } | null;
+}
+
+export interface AdminPhoneNumberRequest {
+  id: string;
+  companyId: string;
+  status: "PENDING" | "APPROVED" | "REJECTED" | "CANCELED";
+  note: string | null;
+  adminNote: string | null;
+  createdAt: string;
+  company: { id: string; name: string };
+}
+
 interface ListResponse {
   data: AdminCompany[];
   meta: { total: number };
@@ -31,6 +53,10 @@ interface ListResponse {
 }
 
 interface SingleResponse { data: unknown }
+interface PhoneNumberListResponse { data: AdminPhoneNumber[]; meta: { total: number } }
+interface PhoneNumberResponse { data: AdminPhoneNumber }
+interface PhoneNumberRequestListResponse { data: AdminPhoneNumberRequest[]; meta: { total: number } }
+interface PhoneNumberRequestResponse { data: AdminPhoneNumberRequest }
 
 export const adminApi = {
   listCompanies: () =>
@@ -41,4 +67,25 @@ export const adminApi = {
 
   updateCompany: (id: string, data: { isActive?: boolean; adminNotes?: string }) =>
     apiClient.patch<SingleResponse>(`/admin/companies/${id}`, data),
+
+  listPhoneNumbers: () =>
+    apiClient.get<PhoneNumberListResponse>("/admin/phone-numbers"),
+
+  createPhoneNumber: (data: {
+    number: string;
+    displayName?: string;
+    twilioSid?: string;
+    companyId?: string;
+  }) => apiClient.post<PhoneNumberResponse>("/admin/phone-numbers", data),
+
+  assignPhoneNumber: (id: string, companyId?: string | null) =>
+    apiClient.patch<PhoneNumberResponse>(`/admin/phone-numbers/${id}/assignment`, { companyId }),
+
+  listPhoneNumberRequests: () =>
+    apiClient.get<PhoneNumberRequestListResponse>("/admin/phone-number-requests"),
+
+  updatePhoneNumberRequest: (
+    id: string,
+    data: { status?: AdminPhoneNumberRequest["status"]; adminNote?: string }
+  ) => apiClient.patch<PhoneNumberRequestResponse>(`/admin/phone-number-requests/${id}`, data),
 };

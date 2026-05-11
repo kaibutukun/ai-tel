@@ -34,7 +34,14 @@ const navItems = [
 const adminItems = [
   { href: "/admin", label: "管理者画面", icon: Shield },
   { href: "/admin/companies", label: "企業管理", icon: Building2 },
+  { href: "/admin/phone-numbers", label: "電話番号管理", icon: Phone },
 ];
+
+function isActivePath(pathname: string, href: string) {
+  return href === "/admin"
+    ? pathname === href
+    : pathname === href || pathname.startsWith(href + "/");
+}
 
 /** base64url → JSON（JWTペイロードのデコード用） */
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -118,7 +125,7 @@ export function Sidebar() {
                 href={href}
                 className={cn(
                   "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                  pathname === href || pathname.startsWith(href + "/")
+                  isActivePath(pathname, href)
                     ? "bg-purple-50 text-purple-700"
                     : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                 )}

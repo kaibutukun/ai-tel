@@ -47,6 +47,7 @@ model Company {
 
   members              CompanyMember[]
   phoneNumbers         PhoneNumber[]
+  phoneNumberRequests  PhoneNumberRequest[]
   callFlows            CallFlow[]
   faqs                 FAQ[]
   documents            Document[]
@@ -85,7 +86,7 @@ enum Role {
 
 model PhoneNumber {
   id          String   @id @default(cuid())
-  companyId   String
+  companyId   String?
   number      String   @unique
   displayName String?
   callFlowId  String?
@@ -98,10 +99,29 @@ model PhoneNumber {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  company       Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company       Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
   callFlow      CallFlow?     @relation(fields: [callFlowId], references: [id])
   businessHours BusinessHour[]
   callSessions  CallSession[]
+}
+
+model PhoneNumberRequest {
+  id        String                     @id @default(cuid())
+  companyId String
+  status    PhoneNumberRequestStatus  @default(PENDING)
+  note      String?
+  adminNote String?
+  createdAt DateTime                   @default(now())
+  updatedAt DateTime                   @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+enum PhoneNumberRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELED
 }
 
 model BusinessHour {

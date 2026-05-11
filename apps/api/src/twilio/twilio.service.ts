@@ -59,6 +59,12 @@ export class TwilioService {
       return response.toString();
     }
 
+    if (!phoneNumber.companyId) {
+      response.say({ language: "ja-JP" }, "この電話番号は現在どの会社にも割り当てられていません。");
+      response.hangup();
+      return response.toString();
+    }
+
     await this.createOrUpdateCallSession({
       callSid,
       companyId: phoneNumber.companyId,

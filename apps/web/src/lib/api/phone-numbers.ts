@@ -2,7 +2,7 @@ import { apiClient } from "./client";
 
 export interface PhoneNumber {
   id: string;
-  companyId: string;
+  companyId: string | null;
   number: string;
   displayName: string | null;
   callFlowId: string | null;
@@ -25,7 +25,18 @@ export interface BusinessHour {
 }
 
 interface ListResponse { data: PhoneNumber[]; meta: { total: number } }
+export interface PhoneNumberRequest {
+  id: string;
+  companyId: string;
+  status: "PENDING" | "APPROVED" | "REJECTED" | "CANCELED";
+  note: string | null;
+  adminNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface SingleResponse { data: PhoneNumber }
+interface RequestResponse { data: PhoneNumberRequest }
 
 export const phoneNumbersApi = {
   list: (companyId: string) =>
@@ -34,15 +45,8 @@ export const phoneNumbersApi = {
   get: (id: string) =>
     apiClient.get<SingleResponse>(`/phone-numbers/${id}`),
 
-  create: (data: {
-    companyId: string;
-    number: string;
-    displayName?: string;
-    twilioSid?: string;
-    transferTo?: string;
-    isActive?: boolean;
-    callFlowId?: string;
-  }) => apiClient.post<SingleResponse>("/phone-numbers", data),
+  requestAdditionalNumber: (data: { companyId: string; note?: string }) =>
+    apiClient.post<RequestResponse>("/phone-numbers/requests", data),
 
   update: (id: string, data: { displayName?: string; transferTo?: string; isActive?: boolean; callFlowId?: string }) =>
     apiClient.patch<SingleResponse>(`/phone-numbers/${id}`, data),

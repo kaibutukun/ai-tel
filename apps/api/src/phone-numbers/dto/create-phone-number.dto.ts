@@ -10,9 +10,10 @@ function normalizePhoneNumber(value: unknown) {
  * 番号の購入や本人確認は Twilio 側で手動対応し、ここでは DB への紐づけだけを行う。
  */
 export class CreatePhoneNumberDto {
-  /** 登録先の会社ID */
+  /** 割当先の会社ID。未指定の場合は運営管理の番号在庫として登録する */
+  @IsOptional()
   @IsString()
-  companyId: string;
+  companyId?: string;
 
   /** Twilio の電話番号。Webhook 照合のため E.164 形式（例: +815012345678）で保存する */
   @Transform(({ value }) => normalizePhoneNumber(value))

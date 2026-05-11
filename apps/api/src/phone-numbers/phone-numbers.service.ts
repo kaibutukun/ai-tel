@@ -1,11 +1,6 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { CreatePhoneNumberDto } from "./dto/create-phone-number.dto";
+import { CreatePhoneNumberRequestDto } from "./dto/create-phone-number-request.dto";
 import { UpdatePhoneNumberDto } from "./dto/update-phone-number.dto";
 
 @Injectable()
@@ -37,49 +32,23 @@ export class PhoneNumbersService {
     return { data: phoneNumber };
   }
 
-  /**
-   * Twilio Console で取得済みの番号を会社に紐づける。
-   * 番号購入・Webhook設定は運営管理者が Twilio 側で行い、アプリは利用設定だけを持つ。
-   */
-  async create(dto: CreatePhoneNumberDto) {
-    const existing = await this.prisma.phoneNumber.findUnique({
-      where: { number: dto.number },
-    });
-    if (existing) throw new ConflictException("この電話番号はすでに登録されています");
-
+  /** 会社ユーザーが運営管理者へ電話番号追加を依頼する */
+  async createRequest(dto: CreatePhoneNumberRequestDto) {
     const company = await this.prisma.company.findUnique({
       where: { id: dto.companyId },
       select: { id: true },
     });
     if (!company) throw new NotFoundException("会社が見つかりません");
 
-    if (dto.callFlowId) {
-      const callFlow = await this.prisma.callFlow.findFirst({
-        where: { id: dto.callFlowId, companyId: dto.companyId },
-        select: { id: true },
-      });
-      if (!callFlow) {
-        throw new BadRequestException("指定された対応フローが会社に紐づいていません");
-      }
-    }
-
-    const phoneNumber = await this.prisma.phoneNumber.create({
+    const request = await this.prisma.phoneNumberRequest.create({
       data: {
         companyId: dto.companyId,
-        number: dto.number,
-        displayName: dto.displayName,
-        twilioSid: dto.twilioSid,
-        transferTo: dto.transferTo,
-        isActive: dto.isActive ?? true,
-        callFlowId: dto.callFlowId,
+        note: dto.note,
       },
-      include: {
-        callFlow: { select: { id: true, name: true } },
-        businessHours: { orderBy: { dayOfWeek: "asc" } },
-      },
+      include: { company: { select: { id: true, name: true } } },
     });
 
-    return { data: phoneNumber };
+    return { data: request };
   }
 
   /**
