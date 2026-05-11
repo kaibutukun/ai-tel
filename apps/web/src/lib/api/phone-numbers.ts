@@ -48,6 +48,6 @@ export const phoneNumbersApi = {
   requestAdditionalNumber: (data: { companyId: string; note?: string }) =>
     apiClient.post<RequestResponse>("/phone-numbers/requests", data),
 
-  update: (id: string, data: { displayName?: string; transferTo?: string; isActive?: boolean; callFlowId?: string }) =>
+  update: (id: string, data: { displayName?: string | null; transferTo?: string | null; isActive?: boolean; callFlowId?: string | null }) =>
     apiClient.patch<SingleResponse>(`/phone-numbers/${id}`, data),
 };

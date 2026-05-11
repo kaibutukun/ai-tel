@@ -8,12 +8,12 @@ export class UpdatePhoneNumberDto {
   /** 表示名（例: "代表回線", "予約専用"） */
   @IsOptional()
   @IsString()
-  displayName?: string;
+  displayName?: string | null;
 
   /** 転送先電話番号 */
   @IsOptional()
   @IsString()
-  transferTo?: string;
+  transferTo?: string | null;
 
   /** 有効/無効フラグ */
   @IsOptional()
@@ -23,5 +23,5 @@ export class UpdatePhoneNumberDto {
   /** 割り当てるコールフローID */
   @IsOptional()
   @IsString()
-  callFlowId?: string;
+  callFlowId?: string | null;
 }

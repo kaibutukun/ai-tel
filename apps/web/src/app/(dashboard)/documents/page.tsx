@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Upload, FileText, Globe, AlignLeft, X } from "lucide-react";
+import { Upload, FileText, Globe, AlignLeft } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DocumentModal } from "@/components/documents/DocumentModal";
 import { aiApi, type AiSource } from "@/lib/api/ai";
 import { documentsApi, type Document } from "@/lib/api/documents";
@@ -210,30 +211,18 @@ export default function DocumentsPage() {
       )}
 
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4">
-            <div className="flex items-start justify-between">
-              <h2 className="text-sm font-semibold text-gray-900">資料を削除しますか？</h2>
-              <button
-                onClick={() => setDeleteTarget(null)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-sm text-gray-600">
+        <ConfirmDialog
+          title="資料を削除しますか？"
+          description={
+            <>
               <span className="font-medium text-gray-900">{deleteTarget.name}</span> を削除します。この操作は取り消せません。
-            </p>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
-                キャンセル
-              </Button>
-              <Button variant="destructive" onClick={handleDeleteConfirm} disabled={deleting}>
-                {deleting ? "削除中..." : "削除する"}
-              </Button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+          confirmLabel="削除する"
+          loading={deleting}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={handleDeleteConfirm}
+        />
       )}
     </>
   );

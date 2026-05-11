@@ -7,6 +7,7 @@ import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CreateFlowModal } from "@/components/call-flows/CreateFlowModal";
 import { callFlowsApi, type CallFlow } from "@/lib/api/call-flows";
 import { getCompanyId } from "@/lib/get-company-id";
@@ -15,6 +16,8 @@ export default function CallFlowsPage() {
   const [flows, setFlows] = useState<CallFlow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<CallFlow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchFlows = useCallback(async () => {
     const companyId = getCompanyId();
@@ -38,13 +41,17 @@ export default function CallFlowsPage() {
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`「${name}」を削除しますか？`)) return;
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await callFlowsApi.remove(id);
-      setFlows((prev) => prev.filter((f) => f.id !== id));
+      await callFlowsApi.remove(deleteTarget.id);
+      setFlows((prev) => prev.filter((f) => f.id !== deleteTarget.id));
+      setDeleteTarget(null);
     } catch {
       alert("削除に失敗しました");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -115,7 +122,7 @@ export default function CallFlowsPage() {
                           <CheckCircle2 className="w-4 h-4 mr-1" />公開
                         </Button>
                       )}
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(flow.id, flow.name)}>
+                      <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(flow)}>
                         <Trash2 className="w-4 h-4 text-red-400" />
                       </Button>
                     </div>
@@ -132,6 +139,21 @@ export default function CallFlowsPage() {
           companyId={getCompanyId()}
           onClose={() => setShowCreateModal(false)}
           onCreated={handleCreated}
+        />
+      )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="対応フローを削除しますか？"
+          description={
+            <>
+              <span className="font-medium text-gray-900">{deleteTarget.name}</span> を削除します。この操作は取り消せません。
+            </>
+          }
+          confirmLabel="削除する"
+          loading={deleting}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={handleDelete}
         />
       )}
     </>

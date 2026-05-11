@@ -5,6 +5,7 @@ import { UserPlus, Trash2 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { RoleSelector } from "@/components/members/RoleSelector";
 import { InviteMemberModal } from "@/components/members/InviteMemberModal";
 import { membersApi, type Member, type MemberRole } from "@/lib/api/members";
@@ -23,6 +24,8 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Member | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // メンバー一覧をバックエンドから取得
   const fetchMembers = useCallback(async () => {
@@ -59,13 +62,17 @@ export default function MembersPage() {
   };
 
   // メンバー削除
-  const handleDelete = async (memberId: string, name: string) => {
-    if (!confirm(`${name} をメンバーから削除しますか？`)) return;
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await membersApi.remove(memberId);
-      setMembers((prev) => prev.filter((m) => m.id !== memberId));
+      await membersApi.remove(deleteTarget.id);
+      setMembers((prev) => prev.filter((m) => m.id !== deleteTarget.id));
+      setDeleteTarget(null);
     } catch (e) {
       alert(e instanceof Error ? e.message : "メンバーの削除に失敗しました");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -177,9 +184,7 @@ export default function MembersPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() =>
-                            handleDelete(member.id, member.name)
-                          }
+                          onClick={() => setDeleteTarget(member)}
                           title="メンバーを削除"
                         >
                           <Trash2 className="w-4 h-4 text-red-400" />
@@ -199,6 +204,21 @@ export default function MembersPage() {
             companyId={getCompanyId()}
             onClose={() => setShowInviteModal(false)}
             onInvited={fetchMembers}
+          />
+        )}
+
+        {deleteTarget && (
+          <ConfirmDialog
+            title="メンバーを削除しますか？"
+            description={
+              <>
+                <span className="font-medium text-gray-900">{deleteTarget.name}</span> をメンバーから削除します。この操作は取り消せません。
+              </>
+            }
+            confirmLabel="削除する"
+            loading={deleting}
+            onCancel={() => setDeleteTarget(null)}
+            onConfirm={handleDelete}
           />
         )}
       </main>

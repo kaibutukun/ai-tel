@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { FaqModal } from "@/components/faqs/FaqModal";
 import { faqsApi, type Faq } from "@/lib/api/faqs";
 import { getCompanyId } from "@/lib/get-company-id";
@@ -17,6 +18,8 @@ export default function FaqsPage() {
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingFaq, setEditingFaq] = useState<Faq | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Faq | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchFaqs = useCallback(async () => {
     const companyId = getCompanyId();
@@ -40,13 +43,17 @@ export default function FaqsPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("このFAQを削除しますか？")) return;
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await faqsApi.remove(id);
-      setFaqs((prev) => prev.filter((f) => f.id !== id));
+      await faqsApi.remove(deleteTarget.id);
+      setFaqs((prev) => prev.filter((f) => f.id !== deleteTarget.id));
+      setDeleteTarget(null);
     } catch {
       alert("削除に失敗しました");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -107,7 +114,7 @@ export default function FaqsPage() {
                         <Button variant="ghost" size="icon" onClick={() => openEdit(faq)}>
                           <Pencil className="w-4 h-4 text-gray-400" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleDelete(faq.id)}>
+                        <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(faq)}>
                           <Trash2 className="w-4 h-4 text-red-400" />
                         </Button>
                       </div>
@@ -131,6 +138,21 @@ export default function FaqsPage() {
           faq={editingFaq}
           onClose={closeModal}
           onSaved={fetchFaqs}
+        />
+      )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="FAQを削除しますか？"
+          description={
+            <>
+              <span className="font-medium text-gray-900">{deleteTarget.question}</span> を削除します。この操作は取り消せません。
+            </>
+          }
+          confirmLabel="削除する"
+          loading={deleting}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={handleDelete}
         />
       )}
     </>
