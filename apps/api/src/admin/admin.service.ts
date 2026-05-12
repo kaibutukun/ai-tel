@@ -111,7 +111,7 @@ export class AdminService {
     return { data: company };
   }
 
-  /** 運営管理者向け: Twilio 番号在庫と割当状況を一覧する */
+  /** 運営管理者向け: NTT CPaaS 番号在庫と割当状況を一覧する */
   async findAllPhoneNumbers() {
     const phoneNumbers = await this.prisma.phoneNumber.findMany({
       include: {
@@ -124,7 +124,7 @@ export class AdminService {
   }
 
   /**
-   * 運営管理者向け: Twilio Console で取得済みの番号を在庫登録する。
+   * 運営管理者向け: NTT CPaaS で取得済みの番号を在庫登録する。
    * companyId を渡すと登録と同時に会社へ割り当てる。
    */
   async createPhoneNumber(dto: CreatePhoneNumberDto) {
@@ -140,7 +140,8 @@ export class AdminService {
         companyId: dto.companyId || null,
         number: dto.number,
         displayName: dto.displayName,
-        twilioSid: dto.twilioSid,
+        providerNumberId: dto.providerNumberId,
+        provider: "ntt-cpaas",
         transferTo: dto.transferTo,
         isActive: dto.isActive ?? true,
         callFlowId: dto.companyId ? dto.callFlowId : null,

@@ -15,7 +15,7 @@ interface RequestPhoneNumberModalProps {
 
 /**
  * 会社ユーザー向けの電話番号追加リクエスト。
- * 実際の Twilio 番号登録と割当は、運営管理者が admin 画面で行う。
+ * 実際の NTT CPaaS 番号登録と割当は、運営管理者が admin 画面で行う。
  */
 export function RequestPhoneNumberModal({
   companyId,

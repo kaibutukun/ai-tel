@@ -9,7 +9,7 @@ import { CallSessionsService } from "./call-sessions.service";
 
 /**
  * 通話セッション API（読み取り専用）
- * 通話データは Twilio/AI コアロジックによって書き込まれる
+ * 通話データは CPaaS/AI コアロジックによって書き込まれる
  *
  * GET /api/call-sessions?companyId=xxx&page=1&limit=20  - 一覧
  * GET /api/call-sessions/:id                            - 詳細

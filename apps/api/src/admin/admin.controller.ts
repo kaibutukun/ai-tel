@@ -12,8 +12,8 @@ import { AdminGuard } from "../common/guards/admin.guard";
  * GET   /api/admin/companies        - 全企業一覧 + 統計サマリー
  * GET   /api/admin/companies/:id    - 企業詳細
  * PATCH /api/admin/companies/:id    - 企業情報更新（有効/無効・メモ）
- * GET   /api/admin/phone-numbers    - Twilio 番号在庫一覧
- * POST  /api/admin/phone-numbers    - Twilio 番号を在庫登録
+ * GET   /api/admin/phone-numbers    - NTT CPaaS 番号在庫一覧
+ * POST  /api/admin/phone-numbers    - NTT CPaaS 番号を在庫登録
  * PATCH /api/admin/phone-numbers/:id/assignment - 会社へ割当/未割当化
  * GET   /api/admin/phone-number-requests - 会社からの番号追加リクエスト一覧
  */

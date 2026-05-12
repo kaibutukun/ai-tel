@@ -6,8 +6,8 @@ function normalizePhoneNumber(value: unknown) {
 }
 
 /**
- * Twilio Console で取得済みの番号をアプリに登録する DTO。
- * 番号の購入や本人確認は Twilio 側で手動対応し、ここでは DB への紐づけだけを行う。
+ * NTT CPaaS で取得済みの番号をアプリに登録する DTO。
+ * 番号の取得や本人確認は NTT CPaaS 側で対応し、ここでは DB への紐づけだけを行う。
  */
 export class CreatePhoneNumberDto {
   /** 割当先の会社ID。未指定の場合は運営管理の番号在庫として登録する */
@@ -15,7 +15,7 @@ export class CreatePhoneNumberDto {
   @IsString()
   companyId?: string;
 
-  /** Twilio の電話番号。Webhook 照合のため E.164 形式（例: +815012345678）で保存する */
+  /** NTT CPaaS の電話番号。Webhook 照合のため E.164 形式（例: +815012345678）で保存する */
   @Transform(({ value }) => normalizePhoneNumber(value))
   @Matches(/^\+[1-9]\d{1,14}$/, {
     message: "number must be in E.164 format, e.g. +15717175671",
@@ -27,12 +27,12 @@ export class CreatePhoneNumberDto {
   @IsString()
   displayName?: string;
 
-  /** Twilio Console の IncomingPhoneNumber SID（任意だが運用上は保存推奨） */
+  /** NTT CPaaS / Infobip 側で照合できる番号ID（任意） */
   @IsOptional()
   @IsString()
-  twilioSid?: string;
+  providerNumberId?: string;
 
-  /** 転送先電話番号。Twilio が発信できる形式（E.164推奨）で保存する */
+  /** 転送先電話番号。NTT CPaaS が発信できる形式（E.164推奨）で保存する */
   @IsOptional()
   @Transform(({ value }) => normalizePhoneNumber(value))
   @IsString()

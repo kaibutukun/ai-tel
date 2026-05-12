@@ -1,29 +1,12 @@
 import { Logger } from "@nestjs/common";
-import WebSocket from "ws";
+import WebSocket = require("ws");
 import { OpenAIRealtimeClient } from "./openai-realtime-client";
-import {
-  TwilioInboundMessage,
-  TwilioMediaOutbound,
-  TwilioOutboundMessage,
-  TwilioStartMessage,
-} from "./twilio-stream.types";
+import { NttCpaasDtmfMessage } from "./ntt-cpaas-stream.types";
 import { CompiledFlow } from "../call-flows/flow-compiler.service";
 import { ToolContext, ToolExecutorService } from "./tool-executor.service";
 
-// ─────────────────────────────────────────────────────────────
-// RealtimeBridge
-//
-// 1通話＝1インスタンス。
-// 「Twilio Media Stream (WebSocket)」と「OpenAI Realtime (WebSocket)」の
-// 双方向 pipe を担当する。
-//
-//   お客様音声 ── Twilio ──► このサーバー ──► OpenAI Realtime
-//                                             │
-//                                             ▼  音声/テキスト/tool call
-//   再生音声  ◄── Twilio ◄── このサーバー ◄── OpenAI Realtime
-//
-// 音声は g711 µ-law / base64 / 8kHz を両側で揃えているので無変換でリレー。
-// ─────────────────────────────────────────────────────────────
+const NTT_CPAAS_SAMPLE_RATE = 24000;
+const NTT_CPAAS_FRAME_BYTES = 960; // 24kHz * 20ms * 16-bit mono
 
 export interface BridgeContext {
   companyId: string;
@@ -39,78 +22,30 @@ export interface BridgeContext {
 export interface BridgeDeps {
   openAiApiKey: string;
   toolExecutor: ToolExecutorService;
-  /** 通話中に転送が必要になった時に Twilio REST で実際の dial 変更を行うフック（後で実装） */
-  onTransferRequested?: (callSid: string, to: string) => Promise<void> | void;
+  /** 通話中に転送が必要になった時に CPaaS API で実際の転送を行うフック（後で実装） */
+  onTransferRequested?: (providerCallId: string, to: string) => Promise<void> | void;
 }
 
 export class RealtimeBridge {
   private readonly logger = new Logger(RealtimeBridge.name);
-  private streamSid: string | null = null;
-  private callSid: string | null = null;
+  private providerCallId: string | null = null;
   private openai: OpenAIRealtimeClient | null = null;
   private closed = false;
+  private outputBuffer = Buffer.alloc(0);
 
   constructor(
-    private readonly twilioWs: WebSocket,
+    private readonly cpaasWs: WebSocket,
     private readonly compiled: CompiledFlow,
     private readonly context: BridgeContext,
     private readonly deps: BridgeDeps
   ) {
-    this.attachTwilioListeners();
+    this.attachCpaasListeners();
   }
 
-  // ────────────────────────────────────────────
-  // Twilio 側ハンドリング
-  // ────────────────────────────────────────────
+  async start(providerCallId?: string) {
+    this.providerCallId = providerCallId ?? null;
+    this.logger.log(`NTT CPaaS stream start callId=${this.providerCallId ?? "-"}`);
 
-  private attachTwilioListeners() {
-    this.twilioWs.on("message", async (raw) => {
-      try {
-        const text = typeof raw === "string" ? raw : raw.toString("utf8");
-        const msg = JSON.parse(text) as TwilioInboundMessage;
-        await this.handleTwilioMessage(msg);
-      } catch (err) {
-        this.logger.warn(`Failed to parse Twilio message: ${(err as Error).message}`);
-      }
-    });
-    this.twilioWs.on("close", () => this.shutdown("twilio_closed"));
-    this.twilioWs.on("error", (err) => {
-      this.logger.error(`Twilio WS error: ${err.message}`);
-      this.shutdown("twilio_error");
-    });
-  }
-
-  private async handleTwilioMessage(msg: TwilioInboundMessage) {
-    switch (msg.event) {
-      case "connected":
-        // Twilio から最初に来るハンドシェイク。中身は無視で OK。
-        break;
-      case "start":
-        await this.onStreamStart(msg);
-        break;
-      case "media":
-        // 受信音声を OpenAI へリレー
-        if (msg.media.track === "inbound") {
-          this.openai?.appendInputAudio(msg.media.payload);
-        }
-        break;
-      case "stop":
-        this.shutdown("twilio_stop");
-        break;
-      case "dtmf":
-        // 今は無視（将来: 「9 を押すとオペレーター」等のショートカットに使う）
-        break;
-      default:
-        break;
-    }
-  }
-
-  private async onStreamStart(msg: TwilioStartMessage) {
-    this.streamSid = msg.streamSid;
-    this.callSid = msg.start.callSid;
-    this.logger.log(`stream start callSid=${this.callSid} streamSid=${this.streamSid}`);
-
-    // OpenAI Realtime 接続
     try {
       this.openai = new OpenAIRealtimeClient(this.deps.openAiApiKey);
       this.attachOpenAiListeners(this.openai);
@@ -118,18 +53,14 @@ export class RealtimeBridge {
       this.openai.updateSession({
         instructions: this.compiled.instructions,
         tools: this.compiled.tools,
-        // Twilio から来るのも g711_ulaw、Twilio へ送るのも g711_ulaw。
-        inputAudioFormat: "g711_ulaw",
-        outputAudioFormat: "g711_ulaw",
-        // 声色は env で差し替え可能（OpenAI が用意してる代表声）
+        inputAudioFormat: "pcm16",
+        outputAudioFormat: "pcm16",
         voice: process.env.OPENAI_REALTIME_VOICE || "alloy",
       });
 
-      // 開幕の固定発話があるなら即座に喋らせる
       if (this.compiled.openingLockedMessage) {
         this.openai.injectAssistantUtterance(this.compiled.openingLockedMessage);
       } else {
-        // 固定発話が無いケースでは LLM 自身に最初の発話を作らせる
         this.openai.injectAssistantUtterance("お電話ありがとうございます。");
       }
     } catch (err) {
@@ -138,16 +69,42 @@ export class RealtimeBridge {
     }
   }
 
-  // ────────────────────────────────────────────
-  // OpenAI 側ハンドリング
-  // ────────────────────────────────────────────
+  private attachCpaasListeners() {
+    this.cpaasWs.on("message", async (raw, isBinary) => {
+      try {
+        if (isBinary) {
+          this.handleInputAudio(this.toBuffer(raw));
+          return;
+        }
+
+        const text = typeof raw === "string" ? raw : raw.toString("utf8");
+        const msg = JSON.parse(text) as NttCpaasDtmfMessage;
+        if (msg.event === "websocket:dtmf") {
+          // 今は無視（将来: 「9 を押すとオペレーター」等のショートカットに使う）
+        }
+      } catch (err) {
+        this.logger.warn(`Failed to handle NTT CPaaS message: ${(err as Error).message}`);
+      }
+    });
+    this.cpaasWs.on("close", () => this.shutdown("cpaas_closed"));
+    this.cpaasWs.on("error", (err) => {
+      this.logger.error(`NTT CPaaS WS error: ${err.message}`);
+      this.shutdown("cpaas_error");
+    });
+  }
+
+  private handleInputAudio(audio: Buffer) {
+    if (audio.length === 0) return;
+    this.openai?.appendInputAudio(audio.toString("base64"));
+  }
 
   private attachOpenAiListeners(client: OpenAIRealtimeClient) {
-    client.on("audioDelta", (audio) => this.sendTwilioAudio(audio));
+    client.on("audioDelta", (audio) => this.sendCpaasAudio(audio));
 
     client.on("speechStarted", () => {
-      // ユーザーが割り込んだ → Twilio 側の再生キューを破棄して被らないようにする
-      this.sendTwilio({ event: "clear", streamSid: this.streamSid ?? "" });
+      // NTT CPaaS WebSocket endpoint には再生バッファ clear 相当がないため、
+      // こちら側の未送信フレームだけ破棄し、OpenAI の応答生成を止める。
+      this.outputBuffer = Buffer.alloc(0);
       client.cancelResponse();
     });
 
@@ -167,18 +124,15 @@ export class RealtimeBridge {
         { callId: call.callId, name: call.name, arguments: call.arguments },
         ctx
       );
-      // モデルにツール結果を返す（続きの発話を促す）
       client.sendFunctionResult(call.callId, result.output);
 
-      // 通話側の副作用処理
-      if (result.sideEffect?.kind === "transfer" && this.callSid) {
+      if (result.sideEffect?.kind === "transfer" && this.providerCallId) {
         try {
-          await this.deps.onTransferRequested?.(this.callSid, result.sideEffect.to);
+          await this.deps.onTransferRequested?.(this.providerCallId, result.sideEffect.to);
         } catch (err) {
           this.logger.error(`Transfer failed: ${(err as Error).message}`);
         }
       } else if (result.sideEffect?.kind === "end_call") {
-        // モデルの発話完了を待ってから切るのが理想だが、まずはシンプルに少し遅延
         setTimeout(() => this.shutdown("model_end_call"), 1500);
       }
     });
@@ -193,42 +147,47 @@ export class RealtimeBridge {
     });
   }
 
-  // ────────────────────────────────────────────
-  // Twilio 送信ヘルパ
-  // ────────────────────────────────────────────
+  private sendCpaasAudio(audioBase64: string) {
+    const chunk = Buffer.from(audioBase64, "base64");
+    if (chunk.length === 0) return;
 
-  private sendTwilioAudio(audioBase64: string) {
-    if (!this.streamSid) return;
-    const payload: TwilioMediaOutbound = {
-      event: "media",
-      streamSid: this.streamSid,
-      media: { payload: audioBase64 },
-    };
-    this.sendTwilio(payload);
+    this.outputBuffer = Buffer.concat([this.outputBuffer, chunk]);
+    while (this.outputBuffer.length >= NTT_CPAAS_FRAME_BYTES) {
+      const frame = this.outputBuffer.subarray(0, NTT_CPAAS_FRAME_BYTES);
+      this.outputBuffer = this.outputBuffer.subarray(NTT_CPAAS_FRAME_BYTES);
+      this.sendCpaas(frame);
+    }
   }
 
-  private sendTwilio(payload: TwilioOutboundMessage) {
-    if (this.twilioWs.readyState !== WebSocket.OPEN) return;
-    this.twilioWs.send(JSON.stringify(payload));
+  private sendCpaas(frame: Buffer) {
+    if (this.cpaasWs.readyState !== WebSocket.OPEN) return;
+    this.cpaasWs.send(frame, { binary: true });
   }
 
-  // ────────────────────────────────────────────
-  // 後片付け
-  // ────────────────────────────────────────────
+  private toBuffer(raw: WebSocket.RawData) {
+    if (Buffer.isBuffer(raw)) return raw;
+    if (raw instanceof ArrayBuffer) return Buffer.from(raw);
+    return Buffer.concat(raw);
+  }
 
   shutdown(reason: string) {
     if (this.closed) return;
     this.closed = true;
-    this.logger.log(`shutdown reason=${reason} callSid=${this.callSid}`);
+    this.logger.log(`shutdown reason=${reason} callId=${this.providerCallId ?? "-"}`);
     try {
       this.openai?.close();
     } catch {
       /* noop */
     }
     try {
-      if (this.twilioWs.readyState === WebSocket.OPEN) this.twilioWs.close();
+      if (this.cpaasWs.readyState === WebSocket.OPEN) this.cpaasWs.close();
     } catch {
       /* noop */
     }
   }
 }
+
+export const NTT_CPAAS_REALTIME_AUDIO = {
+  sampleRate: NTT_CPAAS_SAMPLE_RATE,
+  frameBytes: NTT_CPAAS_FRAME_BYTES,
+};

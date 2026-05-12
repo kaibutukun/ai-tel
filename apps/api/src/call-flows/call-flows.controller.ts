@@ -22,7 +22,7 @@ import { UpdateCallFlowDto } from "./dto/update-call-flow.dto";
  * PATCH  /api/call-flows/:id            - 更新（公開/下書き切替含む）
  * DELETE /api/call-flows/:id            - 削除
  *
- * NOTE: フロー実行ロジック（Twilio/AI との連携）はコア側が担当
+ * NOTE: フロー実行ロジック（CPaaS/AI との連携）はコア側が担当
  */
 @Controller("call-flows")
 export class CallFlowsController {

@@ -8,7 +8,7 @@ export interface PhoneNumber {
   callFlowId: string | null;
   callFlow: { id: string; name: string } | null;
   transferTo: string | null;
-  twilioSid: string | null;
+  providerNumberId: string | null;
   provider: string;
   isActive: boolean;
   businessHours: BusinessHour[];

@@ -9,26 +9,10 @@ import type WebSocket from "ws";
 import { PrismaService } from "../prisma/prisma.service";
 import { FlowCompilerService } from "../call-flows/flow-compiler.service";
 import { ToolExecutorService } from "./tool-executor.service";
-import { RealtimeBridge } from "./realtime-bridge";
+import { RealtimeBridge, NTT_CPAAS_REALTIME_AUDIO } from "./realtime-bridge";
+import { NttCpaasConnectedMessage, NttCpaasTextMessage } from "./ntt-cpaas-stream.types";
 
-// ─────────────────────────────────────────────────────────────
-// RealtimeService
-//
-// 通話ごとに WebSocket をハンドルし、RealtimeBridge を生成する。
-//
-// Twilio Media Streams の <Stream url="wss://.../twilio/media-stream">
-// に対し、HTTP サーバーの upgrade を捕まえてこのサービスへ振り分ける。
-//
-// 設計上の制約:
-//   - NestJS の HTTP アダプタ (Express) の `server` を取り、その上に
-//     `ws` の WebSocketServer (noServer モード) を載せる。
-//   - 接続時のクエリパラメータ companyId / flowId / phoneNumberId を使って
-//     どのフローを使うかを決める。
-//     (Twilio の <Parameter> でも同じ値を customParameters として渡せるので
-//      どちらか取りやすい方を使う。ここではクエリパラメータ優先。)
-// ─────────────────────────────────────────────────────────────
-
-const MEDIA_STREAM_PATH = "/twilio/media-stream";
+const MEDIA_STREAM_PATH = "/ntt-cpaas/media-stream";
 
 @Injectable()
 export class RealtimeService implements OnApplicationShutdown {
@@ -43,26 +27,30 @@ export class RealtimeService implements OnApplicationShutdown {
   ) {}
 
   /**
-   * main.ts の bootstrap から HTTP サーバーを受け取り、WebSocket をマウントする。
-   * Nest 側で WebSocket gateway を使うと socket.io 等のレイヤを通すので、
-   * Twilio との互換性のため "raw ws" を直接張る方が単純。
+   * main.ts の bootstrap から HTTP サーバーを受け取り、NTT CPaaS WebSocket
+   * endpoint 用の raw ws サーバーを同一ポートにマウントする。
    */
   attach(httpServer: HttpServer) {
-    if (this.wss) return; // 二重マウント防止
+    if (this.wss) return;
 
     this.wss = new WebSocketServer({ noServer: true });
 
     httpServer.on("upgrade", (req, socket, head) => {
       const url = req.url ?? "";
-      // パス一致のみ受け付ける（他の WS 用途と衝突しないため）
-      if (!url.startsWith(MEDIA_STREAM_PATH)) return;
+      this.logger.log(`WS upgrade attempt: url=${url} host=${req.headers.host} ua=${req.headers["user-agent"] ?? "(none)"}`);
+      if (!url.startsWith(MEDIA_STREAM_PATH)) {
+        socket.destroy();
+        return;
+      }
 
       this.wss!.handleUpgrade(req, socket, head, (ws) => {
+        this.logger.log(`WS upgrade completed for ${url}`);
         this.wss!.emit("connection", ws, req);
       });
     });
 
     this.wss.on("connection", (ws, req) => {
+      this.logger.log(`WS connection received: url=${req.url}`);
       this.handleConnection(ws, req).catch((err) => {
         this.logger.error(`Connection handler failed: ${(err as Error).message}`);
         try {
@@ -73,7 +61,10 @@ export class RealtimeService implements OnApplicationShutdown {
       });
     });
 
-    this.logger.log(`Twilio media stream WS endpoint: ${MEDIA_STREAM_PATH}`);
+    this.logger.log(
+      `NTT CPaaS media stream WS endpoint: ${MEDIA_STREAM_PATH} ` +
+      `(${NTT_CPAAS_REALTIME_AUDIO.sampleRate}Hz/${NTT_CPAAS_REALTIME_AUDIO.frameBytes} bytes)`
+    );
   }
 
   async onApplicationShutdown() {
@@ -81,10 +72,6 @@ export class RealtimeService implements OnApplicationShutdown {
     this.bridges.clear();
     this.wss?.close();
   }
-
-  // ────────────────────────────────────────────
-  // 接続処理
-  // ────────────────────────────────────────────
 
   private async handleConnection(ws: WebSocket, req: IncomingMessage) {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -94,14 +81,17 @@ export class RealtimeService implements OnApplicationShutdown {
       return;
     }
 
-    // クエリパラメータから誰の通話か特定する
-    const url = new URL(req.url ?? "", "http://localhost"); // ベースは仮（path/query 取得用）
-    const phoneNumberId = url.searchParams.get("phoneNumberId");
-    const explicitCompanyId = url.searchParams.get("companyId");
-    const explicitFlowId = url.searchParams.get("flowId");
+    const connected = await this.waitForConnected(ws);
+    const url = new URL(req.url ?? "", "http://localhost");
+
+    const phoneNumberId = url.searchParams.get("phoneNumberId") ?? connected.phoneNumberId;
+    const explicitCompanyId = url.searchParams.get("companyId") ?? connected.companyId;
+    const explicitFlowId = url.searchParams.get("flowId") ?? connected.flowId;
+    const explicitSessionId = url.searchParams.get("callSessionId") ?? connected.callSessionId;
+    const providerCallId = url.searchParams.get("callId") ?? connected.callId;
 
     let companyId = explicitCompanyId;
-    let flowId = explicitFlowId;
+    let flowId = explicitFlowId || null;
     let transferTo: string | undefined;
     let notifyTarget: string | undefined;
 
@@ -123,7 +113,6 @@ export class RealtimeService implements OnApplicationShutdown {
       return;
     }
 
-    // フロー JSON を読み込んでコンパイル
     let compiled = this.compiler.compile(null, null);
     if (flowId) {
       const flow = await this.prisma.callFlow.findUnique({ where: { id: flowId } });
@@ -132,12 +121,10 @@ export class RealtimeService implements OnApplicationShutdown {
       }
     }
 
-    // 通話ログのレコードと紐付ける（Twilio voice webhook 側で既に作られていればそれを使う）
-    let callSessionId: string | null = null;
-    const callSidFromQuery = url.searchParams.get("callSid");
-    if (callSidFromQuery) {
+    let callSessionId: string | null = explicitSessionId ?? null;
+    if (!callSessionId && providerCallId) {
       const session = await this.prisma.callSession.findFirst({
-        where: { twilioCallSid: callSidFromQuery },
+        where: { providerCallId },
         select: { id: true },
       });
       callSessionId = session?.id ?? null;
@@ -157,10 +144,58 @@ export class RealtimeService implements OnApplicationShutdown {
       {
         openAiApiKey: apiKey,
         toolExecutor: this.toolExecutor,
-        // TODO: 転送実装は次フェーズで Twilio REST API 連携を追加
       }
     );
     this.bridges.add(bridge);
     ws.once("close", () => this.bridges.delete(bridge));
+    await bridge.start(providerCallId);
+  }
+
+  private waitForConnected(ws: WebSocket): Promise<NttCpaasConnectedMessage> {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        ws.off("message", onMessage);
+        ws.off("close", onClose);
+        ws.off("error", onError);
+      };
+
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        fn();
+      };
+
+      const onMessage = (raw: WebSocket.RawData, isBinary: boolean) => {
+        if (isBinary) {
+          this.logger.warn("NTT CPaaS sent binary audio before websocket:connected");
+          return;
+        }
+
+        try {
+          const text = typeof raw === "string" ? raw : raw.toString("utf8");
+          const message = JSON.parse(text) as NttCpaasTextMessage;
+          if (message.event === "websocket:connected") {
+            settle(() => resolve(message));
+          }
+        } catch (err) {
+          this.logger.warn(`Failed to parse initial NTT CPaaS message: ${(err as Error).message}`);
+        }
+      };
+
+      const onClose = () => settle(() => reject(new Error("NTT CPaaS media stream closed before connected event")));
+      const onError = (err: Error) => settle(() => reject(err));
+      const timer = setTimeout(
+        () => settle(() => reject(new Error("Timed out waiting for NTT CPaaS websocket:connected"))),
+        5000
+      );
+
+      ws.on("message", onMessage);
+      ws.once("close", onClose);
+      ws.once("error", onError);
+    });
   }
 }

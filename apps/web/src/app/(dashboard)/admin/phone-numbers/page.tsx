@@ -7,7 +7,7 @@ import { adminApi, type AdminCompany } from "@/lib/api/admin";
 
 /**
  * 運営管理者向けの電話番号管理ページ。
- * Twilio番号の在庫登録、未割当ストック、会社への割当、追加リクエスト対応をここに集約する。
+ * NTT CPaaS 番号の在庫登録、未割当ストック、会社への割当、追加リクエスト対応をここに集約する。
  */
 export default function AdminPhoneNumbersPage() {
   const [companies, setCompanies] = useState<AdminCompany[]>([]);

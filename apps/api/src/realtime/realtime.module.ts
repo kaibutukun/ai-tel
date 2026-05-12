@@ -8,7 +8,7 @@ import { ToolExecutorService } from "./tool-executor.service";
 /**
  * RealtimeModule
  *
- * Twilio Media Streams ↔ OpenAI Realtime API のブリッジを提供する。
+ * NTT CPaaS WebSocket endpoint ↔ OpenAI Realtime API のブリッジを提供する。
  * WebSocket サーバーは main.ts から RealtimeService.attach(httpServer) で
  * HTTP サーバーに乗せる。
  */

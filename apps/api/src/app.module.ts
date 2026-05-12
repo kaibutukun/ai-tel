@@ -19,7 +19,7 @@ import { AdminModule } from "./admin/admin.module";
 import { MembersModule } from "./members/members.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { AiModule } from "./ai/ai.module";
-import { TwilioModule } from "./twilio/twilio.module";
+import { NttCpaasModule } from "./ntt-cpaas/ntt-cpaas.module";
 import { RealtimeModule } from "./realtime/realtime.module";
 
 @Module({
@@ -45,7 +45,7 @@ import { RealtimeModule } from "./realtime/realtime.module";
     MembersModule,
     DashboardModule,
     AiModule,
-    TwilioModule,
+    NttCpaasModule,
     RealtimeModule,
   ],
   providers: [

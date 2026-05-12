@@ -10,7 +10,7 @@ export class UpdateCallFlowDto {
   @IsString()
   description?: string;
 
-  /** PUBLISHED にすると Twilio コア側でこのフローが使用される */
+  /** PUBLISHED にすると CPaaS/AI コア側でこのフローが使用される */
   @IsOptional()
   @IsEnum(FlowStatus)
   status?: FlowStatus;

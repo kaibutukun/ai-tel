@@ -31,19 +31,21 @@ async function bootstrap() {
 
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // Twilio Media Streams 用 WebSocket を同一 HTTP サーバーに乗せる。
-  // /twilio/media-stream への upgrade を RealtimeService が捕まえる。
-  const httpServer = app.getHttpServer() as HttpServer;
-  const realtime = app.get(RealtimeService);
-  realtime.attach(httpServer);
-
   // Nest のシャットダウンフック有効化（RealtimeService が WS を綺麗に閉じる）
   app.enableShutdownHooks();
 
   const port = process.env.PORT || 3001;
   await app.listen(port);
+
+  // NTT CPaaS WebSocket endpoint 用 WebSocket を同一 HTTP サーバーに乗せる。
+  // /ntt-cpaas/media-stream への upgrade を RealtimeService が捕まえる。
+  // listen 後にアタッチすることで、Nest が最終的に bind した http.Server を確実に掴む。
+  const httpServer = app.getHttpServer() as HttpServer;
+  const realtime = app.get(RealtimeService);
+  realtime.attach(httpServer);
+
   console.log(`\n🚀 API server running on http://localhost:${port}/api`);
-  console.log(`📞 Twilio media stream WS endpoint: ws(s)://<host>/twilio/media-stream\n`);
+  console.log(`📞 NTT CPaaS media stream WS endpoint: ws(s)://<host>/ntt-cpaas/media-stream\n`);
 }
 
 bootstrap();

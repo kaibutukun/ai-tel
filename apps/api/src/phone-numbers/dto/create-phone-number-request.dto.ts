@@ -2,7 +2,7 @@ import { IsOptional, IsString } from "class-validator";
 
 /**
  * 会社ユーザーが運営管理者へ送る電話番号追加リクエスト。
- * Twilio 番号の購入・在庫登録・割当は運営管理者が admin 画面で行う。
+ * NTT CPaaS 番号の取得・在庫登録・割当は運営管理者が admin 画面で行う。
  */
 export class CreatePhoneNumberRequestDto {
   /** リクエスト元の会社ID */
@@ -14,4 +14,3 @@ export class CreatePhoneNumberRequestDto {
   @IsString()
   note?: string;
 }
-

@@ -91,10 +91,9 @@ model PhoneNumber {
   displayName String?
   callFlowId  String?
   transferTo  String?
-  // Twilio 側の IncomingPhoneNumber SID。Console で番号を手動取得した場合も控えておく。
-  twilioSid   String?
-  // 最初は運営管理の Twilio 番号だけを扱うため固定値に近いが、将来の別プロバイダ移行用に保持。
-  provider    String   @default("twilio")
+  // NTT CPaaS / Infobip 側の番号IDなど、プロバイダ管理画面で照合できるID。
+  providerNumberId String? @map("twilioSid")
+  provider         String  @default("ntt-cpaas")
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -233,8 +232,8 @@ model CallSession {
   companyId       String
   phoneNumberId   String?
   callFlowId      String?
-  // Twilio の CallSid。status callback から同じ通話ログを更新するために使う。
-  twilioCallSid   String?
+  // CPaaS プロバイダ側の通話ID。イベントから同じ通話ログを更新するために使う。
+  providerCallId  String?    @map("twilioCallSid")
   callerNumber    String?
   startedAt       DateTime
   endedAt         DateTime?

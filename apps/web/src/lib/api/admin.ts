@@ -29,7 +29,8 @@ export interface AdminPhoneNumber {
   companyId: string | null;
   number: string;
   displayName: string | null;
-  twilioSid: string | null;
+  providerNumberId: string | null;
+  provider: string;
   transferTo: string | null;
   isActive: boolean;
   createdAt: string;
@@ -74,7 +75,7 @@ export const adminApi = {
   createPhoneNumber: (data: {
     number: string;
     displayName?: string;
-    twilioSid?: string;
+    providerNumberId?: string;
     companyId?: string;
   }) => apiClient.post<PhoneNumberResponse>("/admin/phone-numbers", data),
 

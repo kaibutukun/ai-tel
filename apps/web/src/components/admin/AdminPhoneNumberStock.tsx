@@ -27,14 +27,14 @@ interface AdminPhoneNumberStockProps {
 
 /**
  * 運営管理者用の電話番号在庫管理。
- * Twilio Console で購入した番号を未割当在庫として登録し、必要に応じて会社へ割り当てる。
+ * NTT CPaaS で取得した番号を未割当在庫として登録し、必要に応じて会社へ割り当てる。
  */
 export function AdminPhoneNumberStock({ companies }: AdminPhoneNumberStockProps) {
   const [numbers, setNumbers] = useState<AdminPhoneNumber[]>([]);
   const [requests, setRequests] = useState<AdminPhoneNumberRequest[]>([]);
   const [number, setNumber] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [twilioSid, setTwilioSid] = useState("");
+  const [providerNumberId, setProviderNumberId] = useState("");
   const [companyId, setCompanyId] = useState("stock");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -64,13 +64,13 @@ export function AdminPhoneNumberStock({ companies }: AdminPhoneNumberStockProps)
       const res = await adminApi.createPhoneNumber({
         number,
         displayName: displayName || undefined,
-        twilioSid: twilioSid || undefined,
+        providerNumberId: providerNumberId || undefined,
         companyId: companyId === "stock" ? undefined : companyId,
       });
       setNumbers((prev) => [res.data, ...prev]);
       setNumber("");
       setDisplayName("");
-      setTwilioSid("");
+      setProviderNumberId("");
       setCompanyId("stock");
     } catch (err) {
       alert(err instanceof Error ? err.message : "電話番号の登録に失敗しました");
@@ -135,12 +135,12 @@ export function AdminPhoneNumberStock({ companies }: AdminPhoneNumberStockProps)
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="admin-phone-sid">Twilio SID</Label>
+              <Label htmlFor="admin-phone-provider-id">プロバイダ番号ID</Label>
               <Input
-                id="admin-phone-sid"
-                placeholder="PN..."
-                value={twilioSid}
-                onChange={(e) => setTwilioSid(e.target.value)}
+                id="admin-phone-provider-id"
+                placeholder="NTT CPaaS / Infobip 側の番号ID"
+                value={providerNumberId}
+                onChange={(e) => setProviderNumberId(e.target.value)}
               />
             </div>
             <div className="space-y-1">

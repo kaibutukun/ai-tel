@@ -53,7 +53,7 @@ export class PhoneNumbersService {
 
   /**
    * 電話番号の表示設定を更新する
-   * Twilio Console 側の番号そのものは変更せず、アプリ内の利用設定だけを更新する
+   * NTT CPaaS 側の番号そのものは変更せず、アプリ内の利用設定だけを更新する
    */
   async update(id: string, dto: UpdatePhoneNumberDto) {
     const existing = await this.prisma.phoneNumber.findUnique({ where: { id } });

@@ -1,5 +1,5 @@
 import { Logger } from "@nestjs/common";
-import WebSocket from "ws";
+import WebSocket = require("ws");
 
 // ─────────────────────────────────────────────────────────────
 // OpenAI Realtime API クライアント（WebSocket ラッパー）
@@ -24,7 +24,7 @@ export interface RealtimeSessionConfig {
   instructions: string;
   tools: unknown[];
   voice?: string;
-  /** Twilio の g711_ulaw を直接やり取りするので形式は固定 */
+  /** CPaaS プロバイダの音声形式に合わせる */
   inputAudioFormat?: "g711_ulaw" | "pcm16";
   outputAudioFormat?: "g711_ulaw" | "pcm16";
   turnDetection?: {
@@ -156,7 +156,7 @@ export class OpenAIRealtimeClient {
     });
   }
 
-  /** Twilio 経由のお客様音声を投入 */
+  /** CPaaS 経由のお客様音声を投入 */
   appendInputAudio(base64Audio: string) {
     this.send({
       type: "input_audio_buffer.append",
