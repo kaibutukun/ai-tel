@@ -4,9 +4,16 @@ import { OpenAIRealtimeClient } from "./openai-realtime-client";
 import { NttCpaasDtmfMessage } from "./ntt-cpaas-stream.types";
 import { CompiledFlow } from "../call-flows/flow-compiler.service";
 import { ToolContext, ToolExecutionResult, ToolExecutorService } from "./tool-executor.service";
-
-const NTT_CPAAS_SAMPLE_RATE = 24000;
-const NTT_CPAAS_FRAME_BYTES = 960; // 24kHz * 20ms * 16-bit mono
+import {
+  CpaasAudioFramer,
+  NTT_CPAAS_FRAME_BYTES,
+  NTT_CPAAS_SAMPLE_RATE,
+  Pcm16BargeInDetector,
+  RealtimeSessionClock,
+  logToolNodeEntry,
+  logToolNodeResult,
+  summarizeForLog,
+} from "./core/realtime-bridge-support";
 
 export interface BridgeContext {
   companyId: string;
@@ -26,10 +33,30 @@ export interface BridgeDeps {
   onTransferRequested?: (providerCallId: string, to: string) => Promise<void> | void;
   /** 開発用テスターなど、通話の内部イベントを画面へ流したい呼び出し元向け */
   onEvent?: (event: BridgeObserverEvent) => void;
+  /**
+   * USER/AI の発話が確定したタイミングで CallTranscript として永続化するフック。
+   * 通話ログ詳細ページから後で参照できるようにするため、bridge 内では DB に直接
+   * 触らず callback で受け取って呼び出し側 (RealtimeService) が prisma を介して書く。
+   */
+  saveTranscript?: (data: {
+    callSessionId: string;
+    speaker: "USER" | "AI";
+    content: string;
+    timestamp: number;
+  }) => Promise<void> | void;
+  /** WebSocket が閉じたタイミングで CallSession の終了時刻/通話秒数を補完する。 */
+  markSessionEnded?: (data: {
+    callSessionId: string;
+    endedAt: Date;
+    durationSeconds: number;
+    reason: string;
+  }) => Promise<void> | void;
 }
 
 export type BridgeObserverEvent =
   | { type: "text_delta"; text: string }
+  | { type: "user_transcript"; text: string }
+  | { type: "assistant_transcript_done"; text: string }
   | { type: "function_call"; callId: string; name: string; arguments: string }
   | {
       type: "tool_result";
@@ -46,7 +73,9 @@ export class RealtimeBridge {
   private providerCallId: string | null = null;
   private openai: OpenAIRealtimeClient | null = null;
   private closed = false;
-  private outputBuffer = Buffer.alloc(0);
+  private readonly audioFramer = new CpaasAudioFramer();
+  private readonly bargeInDetector = new Pcm16BargeInDetector();
+  private readonly sessionClock = new RealtimeSessionClock();
   /** AI の応答テキストを 1 ターン分バッファして response.done で吐く */
   private assistantTextBuffer = "";
   /** 入力音声の流量モニタ用カウンタ(直近 3 秒の合計サンプル/バイト数) */
@@ -57,15 +86,17 @@ export class RealtimeBridge {
    * dev でブラウザのスピーカー→マイクのフィードバックで AI が自分の声を
    * "ユーザー発話" として聞いてしまう (response.done → 無限ループ) のを防ぐため、
    * AI 発話中およびその直後 echoGuardMs ms は入力音声を OpenAI に送らない。
-   * PSTN 経由ではエコーキャンセルされるので production は 0 推奨。
+   * ただしこれを有効にするとユーザー割り込み検出も遅れるため、既定値は 0。
+   * ブラウザ dev でスピーカー→マイクの回り込みが強い場合だけ env で有効化する。
    */
   private lastAssistantAudioAt = 0;
   private readonly echoGuardMs = (() => {
     const raw = process.env.REALTIME_ECHO_GUARD_MS;
-    const n = raw === undefined ? 700 : Number(raw);
-    return Number.isFinite(n) && n >= 0 ? n : 700;
+    const n = raw === undefined ? 0 : Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
   })();
   private echoGuardDropCount = 0;
+  private userBargeInUntil = 0;
 
   constructor(
     private readonly cpaasWs: WebSocket,
@@ -83,6 +114,7 @@ export class RealtimeBridge {
 
   async start(providerCallId?: string) {
     this.providerCallId = providerCallId ?? null;
+    this.sessionClock.restart();
     this.logger.log(
       `${this.tag} ▶ session start ` +
         `companyId=${this.context.companyId} ` +
@@ -190,12 +222,19 @@ export class RealtimeBridge {
     if (audio.length === 0) return;
     this.inputAudioBytes += audio.length;
 
+    const client = this.openai;
+    if (client && this.bargeInDetector.shouldInterrupt(audio, client.isResponseActive())) {
+      this.userBargeInUntil = Date.now() + 1200;
+      this.cancelActiveResponse(client, "local audio barge-in");
+    }
+
     // エコーガード: AI が今しゃべってる(または直前まで喋ってた)間の入力は捨てる。
-    // PSTN ではキャリア側でエコーキャンセルされるので、ブラウザ dev でだけ起きる現象。
+    // ただし直近でユーザー割り込みと判定した場合は、続きの発話を捨てない。
     if (
       this.echoGuardMs > 0 &&
       this.lastAssistantAudioAt > 0 &&
-      Date.now() - this.lastAssistantAudioAt < this.echoGuardMs
+      Date.now() - this.lastAssistantAudioAt < this.echoGuardMs &&
+      Date.now() > this.userBargeInUntil
     ) {
       this.echoGuardDropCount += 1;
       return;
@@ -224,6 +263,8 @@ export class RealtimeBridge {
     client.on("responseTranscriptDone", (transcript) => {
       // transcript 確定イベントが先に来る場合もあるので、ここで AI の完全発話を残す
       this.logger.log(`${this.tag} 🤖 AI: ${transcript}`);
+      this.emitObserverEvent({ type: "assistant_transcript_done", text: transcript });
+      void this.persistTranscript("AI", transcript);
     });
 
     client.on("responseDone", (event) => {
@@ -254,6 +295,8 @@ export class RealtimeBridge {
 
     client.on("userTranscript", (transcript) => {
       this.logger.log(`${this.tag} 👤 USER: ${transcript}`);
+      this.emitObserverEvent({ type: "user_transcript", text: transcript });
+      void this.persistTranscript("USER", transcript);
     });
 
     client.on("speechStarted", () => {
@@ -261,11 +304,8 @@ export class RealtimeBridge {
       // NTT CPaaS WebSocket endpoint には再生バッファ clear 相当がないため、
       // こちら側の未送信フレームだけ破棄し、OpenAI の応答生成中ならキャンセル。
       // (response active でない時の response.cancel は OpenAI 側でエラーになる)
-      this.outputBuffer = Buffer.alloc(0);
-      if (client.isResponseActive()) {
-        this.logger.log(`${this.tag} ✂ AI 応答キャンセル(ユーザー割り込み)`);
-        client.cancelResponse();
-      }
+      this.userBargeInUntil = Date.now() + 1200;
+      this.cancelActiveResponse(client, "OpenAI speech_started");
     });
 
     client.on("speechStopped", () => {
@@ -298,6 +338,7 @@ export class RealtimeBridge {
           notifyTarget: this.context.notifyTarget,
         },
         ragPrecision: this.context.ragPrecision,
+        collectRequirements: this.compiled.collectRequirements,
       };
       const startedAt = Date.now();
       const result = await this.deps.toolExecutor.execute(
@@ -305,10 +346,10 @@ export class RealtimeBridge {
         ctx
       );
       const elapsed = Date.now() - startedAt;
-      this.logNodeResult(call.name, result.output, elapsed);
+      logToolNodeResult(this.logger, this.tag, call.name, result.output, elapsed, this.logContext());
       this.logger.debug(
         `${this.tag} 🛠 TOOL result raw: ${call.name} (${elapsed}ms) ` +
-          `output=${this.summarizeForLog(result.output)} ` +
+          `output=${summarizeForLog(result.output)} ` +
           `sideEffect=${result.sideEffect ? JSON.stringify(result.sideEffect) : "-"}`
       );
       this.emitObserverEvent({
@@ -343,14 +384,18 @@ export class RealtimeBridge {
     });
   }
 
-  /** ツール結果ログ用の要約。長すぎる answer/sources は省略する */
-  private summarizeForLog(value: unknown): string {
+  /** 発話内容を CallTranscript として保存。callSessionId が無い接続(設定不備)はスキップ。 */
+  private async persistTranscript(speaker: "USER" | "AI", content: string) {
+    const callSessionId = this.context.callSessionId;
+    const save = this.deps.saveTranscript;
+    if (!callSessionId || !save || !content.trim()) return;
+    const timestamp = this.sessionClock.elapsedSeconds();
     try {
-      const json = JSON.stringify(value);
-      if (json.length <= 600) return json;
-      return `${json.slice(0, 600)}…(+${json.length - 600}chars)`;
-    } catch {
-      return String(value);
+      await save({ callSessionId, speaker, content, timestamp });
+    } catch (err) {
+      this.logger.warn(
+        `${this.tag} failed to persist transcript: ${(err as Error).message}`
+      );
     }
   }
 
@@ -362,155 +407,20 @@ export class RealtimeBridge {
     }
   }
 
-  private clip(text: string, max: number) {
-    if (!text) return "";
-    if (text.length <= max) return text;
-    return `${text.slice(0, max)}…`;
-  }
-
-  /**
-   * tool name → フロー上のノード種別へのラベル付きエントリログ。
-   * 「いまフローのどのノードに入ったか」をパッと見で分かる形にする。
-   */
   private logNodeEntry(toolName: string, args: Record<string, unknown>) {
-    switch (toolName) {
-      case "lookup_documents": {
-        const query = String(args.query ?? "");
-        this.logger.log(
-          `${this.tag} 📚 [RAG ノード] lookup_documents query="${this.clip(query, 120)}" ` +
-            `minScore=${this.context.ragPrecision}`
-        );
-        return;
-      }
-      case "lookup_faq": {
-        const query = String(args.query ?? "");
-        this.logger.log(`${this.tag} ❓ [FAQ ノード] lookup_faq query="${this.clip(query, 120)}"`);
-        return;
-      }
-      case "submit_collected_info": {
-        const fields = args.fields as Record<string, unknown> | undefined;
-        const keys = fields ? Object.keys(fields) : [];
-        this.logger.log(
-          `${this.tag} 📝 [情報収集ノード] submit_collected_info fields={${keys.join(", ")}}`
-        );
-        return;
-      }
-      case "transfer_call": {
-        const to = String(args.to ?? this.context.transferTo ?? "(既定値なし)");
-        const reason = args.reason ? String(args.reason) : "-";
-        this.logger.log(
-          `${this.tag} 📞 [転送ノード] transfer_call to=${to} reason=${this.clip(reason, 80)}`
-        );
-        return;
-      }
-      case "send_notification": {
-        const target = String(args.target ?? this.context.notifyTarget ?? "(既定値なし)");
-        const subject = args.subject ? String(args.subject) : "(件名なし)";
-        const bodyLen = String(args.body ?? "").length;
-        this.logger.log(
-          `${this.tag} 📨 [通知ノード] send_notification target=${target} ` +
-            `subject="${this.clip(subject, 80)}" bodyLen=${bodyLen}`
-        );
-        return;
-      }
-      case "end_call": {
-        const reason = args.reason ? String(args.reason) : "-";
-        this.logger.log(`${this.tag} 🏁 [終了ノード] end_call reason=${this.clip(reason, 80)}`);
-        return;
-      }
-      default:
-        this.logger.log(
-          `${this.tag} 🛠 [未知ツール] ${toolName} args=${this.summarizeForLog(args)}`
-        );
-    }
+    logToolNodeEntry(this.logger, this.tag, toolName, args, this.logContext());
   }
 
-  /** ノード実行の結果を、種別ごとに「成果が分かる形」で出す */
-  private logNodeResult(toolName: string, output: unknown, elapsedMs: number) {
-    const out = (output ?? {}) as Record<string, unknown>;
-    const ok = out.ok !== false;
-    const okMark = ok ? "✓" : "✗";
-
-    switch (toolName) {
-      case "lookup_documents":
-      case "lookup_faq": {
-        const sources = Array.isArray(out.sources)
-          ? (out.sources as Array<{ title?: string; score?: number }>)
-          : [];
-        const top = sources[0];
-        const sourcesSummary =
-          sources.length === 0
-            ? "(該当なし)"
-            : sources
-                .slice(0, 3)
-                .map(
-                  (s) =>
-                    `${s.title ?? "?"}(${typeof s.score === "number" ? s.score.toFixed(3) : "?"})`
-                )
-                .join(", ") + (sources.length > 3 ? `, +${sources.length - 3}件` : "");
-        const answer = typeof out.answer === "string" ? out.answer : "";
-        const icon = toolName === "lookup_documents" ? "📚" : "❓";
-        const label = toolName === "lookup_documents" ? "RAG" : "FAQ";
-        if (sources.length === 0) {
-          this.logger.warn(
-            `${this.tag} ${icon} [${label} ノード結果] ${okMark} hits=0 (${elapsedMs}ms) ` +
-              `→ minScore=${this.context.ragPrecision} で全件フィルタされている可能性`
-          );
-        } else {
-          this.logger.log(
-            `${this.tag} ${icon} [${label} ノード結果] ${okMark} hits=${sources.length} ` +
-              `topScore=${top?.score?.toFixed(3) ?? "?"} (${elapsedMs}ms)`
-          );
-          this.logger.log(`${this.tag}    sources=${sourcesSummary}`);
-          if (answer) this.logger.log(`${this.tag}    answer="${this.clip(answer, 200)}"`);
-        }
-        return;
-      }
-      case "submit_collected_info": {
-        const fields = out.fields as Record<string, unknown> | undefined;
-        const entries = fields ? Object.entries(fields) : [];
-        const summary = entries
-          .map(([k, v]) => `${k}=${this.clip(String(v), 40)}`)
-          .join(", ");
-        this.logger.log(
-          `${this.tag} 📝 [情報収集ノード結果] ${okMark} (${elapsedMs}ms) ${summary || "(空)"}`
-        );
-        return;
-      }
-      case "transfer_call": {
-        this.logger.log(
-          `${this.tag} 📞 [転送ノード結果] ${okMark} (${elapsedMs}ms) to=${String(out.to ?? "-")}` +
-            (out.error ? ` error=${String(out.error)}` : "")
-        );
-        return;
-      }
-      case "send_notification": {
-        this.logger.log(
-          `${this.tag} 📨 [通知ノード結果] ${okMark} (${elapsedMs}ms) target=${String(out.target ?? "-")}`
-        );
-        return;
-      }
-      case "end_call": {
-        this.logger.log(`${this.tag} 🏁 [終了ノード結果] ${okMark} (${elapsedMs}ms)`);
-        return;
-      }
-      default:
-        this.logger.log(
-          `${this.tag} 🛠 [未知ツール結果] ${toolName} ${okMark} (${elapsedMs}ms) ${this.summarizeForLog(output)}`
-        );
-    }
+  private logContext() {
+    return {
+      ragPrecision: this.context.ragPrecision,
+      transferTo: this.context.transferTo,
+      notifyTarget: this.context.notifyTarget,
+    };
   }
 
   private sendCpaasAudio(audioBase64: string) {
-    const chunk = Buffer.from(audioBase64, "base64");
-    if (chunk.length === 0) return;
-
-    this.outputBuffer = Buffer.concat([this.outputBuffer, chunk]);
-    while (this.outputBuffer.length >= NTT_CPAAS_FRAME_BYTES) {
-      const frame = this.outputBuffer.subarray(0, NTT_CPAAS_FRAME_BYTES);
-      this.outputBuffer = this.outputBuffer.subarray(NTT_CPAAS_FRAME_BYTES);
-      this.sendCpaas(frame);
-    }
+    this.audioFramer.append(audioBase64, (frame) => this.sendCpaas(frame));
   }
 
   private sendCpaas(frame: Buffer) {
@@ -528,6 +438,7 @@ export class RealtimeBridge {
     if (this.closed) return;
     this.closed = true;
     this.logger.log(`${this.tag} ■ shutdown reason=${reason}`);
+    this.markSessionEnded(reason);
     if (this.inputAudioLogTimer) {
       clearInterval(this.inputAudioLogTimer);
       this.inputAudioLogTimer = null;
@@ -550,6 +461,32 @@ export class RealtimeBridge {
       this.deps.onEvent?.(event);
     } catch (err) {
       this.logger.warn(`Bridge observer failed: ${(err as Error).message}`);
+    }
+  }
+
+  private cancelActiveResponse(client: OpenAIRealtimeClient, source: string) {
+    this.audioFramer.clear();
+    if (!client.isResponseActive()) return;
+    this.logger.log(`${this.tag} AI 応答キャンセル(ユーザー割り込み: ${source})`);
+    client.cancelResponse();
+  }
+
+  private markSessionEnded(reason: string) {
+    const callSessionId = this.context.callSessionId;
+    const markSessionEnded = this.deps.markSessionEnded;
+    if (!callSessionId || !markSessionEnded) return;
+
+    try {
+      void markSessionEnded({
+        callSessionId,
+        endedAt: new Date(),
+        durationSeconds: this.sessionClock.elapsedWholeSeconds(),
+        reason,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `${this.tag} failed to mark session ended: ${(err as Error).message}`
+      );
     }
   }
 }

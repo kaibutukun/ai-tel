@@ -30,12 +30,19 @@ export interface CompiledFlow {
   instructions: string;
   /** OpenAI Realtime tools 定義 */
   tools: RealtimeTool[];
+  /** 情報収集ノードごとの必須項目。ツール実行時の不足チェックに使う。 */
+  collectRequirements: CollectRequirement[];
   /** 開幕で固定発話するメッセージ（あれば最初に conversation.item.create で注入） */
   openingLockedMessage: string | null;
   /** デフォルトの終了メッセージ（end ノード未到達時のフォールバック） */
   defaultEndMessage: string;
   /** rag ノードの精度設定（複数あれば最も低い = 最も網羅的なものを採用） */
   ragPrecision: number;
+}
+
+export interface CollectRequirement {
+  nodeId: string;
+  fields: string[];
 }
 
 export interface RealtimeTool {
@@ -83,7 +90,9 @@ export class FlowCompilerService {
     // フロー本文の文章化
     const sections: string[] = [];
     sections.push(this.buildHeader(flowName));
-    sections.push(this.buildGuidance());
+    const basicInfo = this.buildBasicInfo(graph.basicInfo);
+    if (basicInfo) sections.push(basicInfo);
+    sections.push(this.buildGuidance(graph));
     sections.push(this.buildFlowOutline(graph, outgoing));
 
     // 終了メッセージ（最後に到達する end ノードのものを採用、なければ汎用文）
@@ -92,15 +101,17 @@ export class FlowCompilerService {
       (endNodes[0]?.data as EndNodeData | undefined)?.endMessage ||
       "お電話ありがとうございました。";
 
-    // rag ノードの精度: 複数あれば最低値（最も網羅的）を採用。
+    // FAQ/RAG ノードの精度: 複数あれば最低値（最も網羅的）を採用。
     // 「厳しい設定が混ざってると全体が厳しくなる」のを避けるため。
     const ragPrecision = this.resolveRagPrecision(graph);
 
     const tools = this.buildTools(graph);
+    const collectRequirements = this.buildCollectRequirements(graph);
 
     return {
       instructions: sections.join("\n\n"),
       tools,
+      collectRequirements,
       openingLockedMessage,
       defaultEndMessage,
       ragPrecision,
@@ -115,6 +126,7 @@ export class FlowCompilerService {
         "【台本】\n  特に定義されていません。お客様の用件を伺い、自然に応対してください。",
       ].join("\n\n"),
       tools: [this.toolEndCall()],
+      collectRequirements: [],
       openingLockedMessage: null,
       defaultEndMessage: "お電話ありがとうございました。",
       ragPrecision: RAG_PRECISION_DEFAULT,
@@ -133,17 +145,48 @@ export class FlowCompilerService {
       .join("\n");
   }
 
+  private buildBasicInfo(value?: string | string[]): string | null {
+    const raw = Array.isArray(value) ? value.filter(Boolean).join(" ") : value;
+    const cleaned = raw?.trim().slice(0, 30);
+    if (!cleaned) return null;
+
+    return [
+      "【AIの基本情報】",
+      cleaned,
+      "この内容を前提に、通話中は自然に応対してください。",
+    ].join("\n");
+  }
+
   /** instructions の共通ガイドライン */
-  private buildGuidance(): string {
+  private buildGuidance(graph?: FlowGraph): string {
+    const hasFaq = graph?.nodes.some(
+      (n) => n.type === "action" && (n.data as ActionNodeData).actionType === "faq"
+    );
+    const hasCollect = graph?.nodes.some(
+      (n) => n.type === "action" && (n.data as ActionNodeData).actionType === "collect"
+    );
+    const hasNotify = graph?.nodes.some(
+      (n) => n.type === "action" && (n.data as ActionNodeData).actionType === "notify"
+    );
     return [
       "【会話のルール】",
       "- 普通に会話してください。以下の台本は厳密な手順ではなく、おおまかな進行の指針です。",
+      "- ただし、台本にあるアクションノードは会話だけで済ませず、対応するツールを必ず使ってください。",
       "- お客様が予期しない話題に逸れたら、まずその発話に自然に応答し、流れを見て本題に戻してください。",
       "- 複数の質問が一度に来た場合は、ひとつずつ順番に答えてください。",
+      hasFaq
+        ? "- 予約方法、営業時間、キャンセル、支払い、アクセスなど、登録FAQで答えられそうな質問を受けた場合は、一般知識や推測で答える前に必ず lookup_faq ツールで確認してください。ツール結果に answer がある場合はその内容だけを短く案内してください。"
+        : "",
+      hasCollect
+        ? "- 予約、申込、折り返しなどの情報収集に入ったら、聞き取れた項目を submit_collected_info ツールで保存してください。missingFields が返った場合は、不足項目だけを一つずつ聞いてください。「適当」「いつでも」「なんでも」など曖昧な値は確定情報として扱わず、具体的な希望を聞き直してください。"
+        : "",
+      hasNotify
+        ? "- 情報収集が完了した後に通知ノードへ進む場合は、send_notification ツールを使って担当者へ内容を送ってください。"
+        : "",
       "- 「人と話したい」「担当者に代わって」と求められたら、ためらわず transfer_call ツールで取り次いでください。",
       "- 不明な質問には推測で答えず、「申し訳ありません、こちらでは分かりかねます」と素直に伝えてください。",
       "- 通話を終える時は end_call ツールを呼んでください。",
-    ].join("\n");
+    ].filter(Boolean).join("\n");
   }
 
   /**
@@ -225,10 +268,10 @@ export class FlowCompilerService {
             return `  [アクション: 通知] (${d.target || "未設定"}) へ通知。send_notification ツールを使用。`;
           case "collect": {
             const fields = (d.fields || []).filter(Boolean).join("・");
-            return `  [アクション: 情報収集] 次の項目を聞き取る: ${fields || "（未設定）"}。すべて埋まったら次へ。`;
+            return `  [アクション: 情報収集] 次の項目を聞き取る: ${fields || "（未設定）"}。聞き取れた項目は submit_collected_info で保存し、不足項目が返ってきたら次の不足項目を聞く。すべて埋まるまで次へ進まない。`;
           }
           case "faq":
-            return `  [アクション: ${label}] 必要なら lookup_faq ツールで登録FAQを参照して回答。`;
+            return `  [アクション: ${label}] お客様の質問を query にして必ず lookup_faq ツールで登録FAQを参照してから回答。該当なしなら推測せず、その旨を伝える。`;
           case "rag":
             return `  [アクション: ${label}] 必要なら lookup_documents ツールで資料を参照して回答。`;
           default:
@@ -290,16 +333,30 @@ export class FlowCompilerService {
     return null;
   }
 
-  /** rag ノードの precision を集約。複数あれば最低値、無ければ既定値。 */
+  /** FAQ/RAG ノードの precision を集約。複数あれば最低値、無ければ既定値。 */
   private resolveRagPrecision(graph: FlowGraph): number {
     const ragNodes = graph.nodes.filter(
-      (n) => n.type === "action" && (n.data as ActionNodeData).actionType === "rag"
+      (n) =>
+        n.type === "action" &&
+        ["faq", "rag"].includes((n.data as ActionNodeData).actionType)
     );
     const values = ragNodes
       .map((n) => (n.data as ActionNodeData).precision)
       .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
     if (values.length === 0) return RAG_PRECISION_DEFAULT;
     return Math.min(...values);
+  }
+
+  private buildCollectRequirements(graph: FlowGraph): CollectRequirement[] {
+    return graph.nodes
+      .filter((n) => n.type === "action" && (n.data as ActionNodeData).actionType === "collect")
+      .map((n) => ({
+        nodeId: n.id,
+        fields: ((n.data as ActionNodeData).fields || [])
+          .map((field) => field.trim())
+          .filter(Boolean),
+      }))
+      .filter((requirement) => requirement.fields.length > 0);
   }
 
   // ────────────────────────────────────────────
@@ -389,7 +446,8 @@ export class FlowCompilerService {
     return {
       type: "function",
       name: "submit_collected_info",
-      description: "情報収集シーンで聞き取った内容を保存する。全フィールドが埋まったら呼ぶ。",
+      description:
+        "情報収集シーンで聞き取った内容を保存する。部分的に聞き取れた時点でも呼べる。結果の missingFields が空になるまで次のノードへ進まない。",
       parameters: {
         type: "object",
         properties: {

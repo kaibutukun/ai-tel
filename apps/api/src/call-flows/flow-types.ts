@@ -77,6 +77,8 @@ export interface FlowEdge {
 export interface FlowGraph {
   nodes: FlowNode[];
   edges: FlowEdge[];
+  /** 通話AIが常に参照する短い基本情報・役割指示 */
+  basicInfo?: string | string[];
 }
 
 // rag の精度パラメータの既定値

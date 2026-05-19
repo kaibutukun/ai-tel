@@ -170,6 +170,8 @@ export class RealtimeService implements OnApplicationShutdown {
       {
         openAiApiKey: apiKey,
         toolExecutor: this.toolExecutor,
+        saveTranscript: (data) => this.persistTranscript(data),
+        markSessionEnded: (data) => this.markSessionEnded(data),
       }
     );
     this.bridges.add(bridge);
@@ -279,6 +281,8 @@ export class RealtimeService implements OnApplicationShutdown {
         openAiApiKey: apiKey,
         toolExecutor: this.toolExecutor,
         onEvent: (event) => this.sendDevBridgeEvent(ws, event),
+        saveTranscript: (data) => this.persistTranscript(data),
+        markSessionEnded: (data) => this.markSessionEnded(data),
       }
     );
     this.bridges.add(bridge);
@@ -398,6 +402,57 @@ export class RealtimeService implements OnApplicationShutdown {
   private sendDevJson(ws: WebSocket, payload: Record<string, unknown>) {
     if (ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify(payload));
+  }
+
+  /** RealtimeBridge から発話確定の度に呼ばれる。CallTranscript として 1 行 INSERT。 */
+  private async persistTranscript(data: {
+    callSessionId: string;
+    speaker: "USER" | "AI";
+    content: string;
+    timestamp: number;
+  }) {
+    try {
+      await this.prisma.callTranscript.create({
+        data: {
+          callSessionId: data.callSessionId,
+          speaker: data.speaker,
+          content: data.content,
+          timestamp: data.timestamp,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to persist transcript for session ${data.callSessionId}: ${(err as Error).message}`
+      );
+    }
+  }
+
+  /** Realtime WS が閉じた時点で終了時刻と秒数を補完する。後続の CPaaS webhook の値は尊重する。 */
+  private async markSessionEnded(data: {
+    callSessionId: string;
+    endedAt: Date;
+    durationSeconds: number;
+    reason: string;
+  }) {
+    try {
+      const current = await this.prisma.callSession.findUnique({
+        where: { id: data.callSessionId },
+        select: { endedAt: true, durationSeconds: true },
+      });
+      if (!current || (current.endedAt && current.durationSeconds != null)) return;
+
+      await this.prisma.callSession.update({
+        where: { id: data.callSessionId },
+        data: {
+          endedAt: current.endedAt ?? data.endedAt,
+          durationSeconds: current.durationSeconds ?? data.durationSeconds,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to mark session ended for ${data.callSessionId}: ${(err as Error).message}`
+      );
+    }
   }
 
   private maskSecret(value: string) {

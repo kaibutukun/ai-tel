@@ -17,11 +17,12 @@ import ReactFlow, {
   Panel,
   MarkerType,
 } from "reactflow";
-import "reactflow/dist/style.css";
 
-import { Save, Undo2, Redo2, ZoomIn } from "lucide-react";
+import { Save, Undo2, Redo2, ZoomIn, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { callFlowsApi } from "@/lib/api/call-flows";
 import { NodePalette } from "./NodePalette";
 import { NodeConfigPanel } from "./NodeConfigPanel";
@@ -55,6 +56,8 @@ interface FlowEditorProps {
   onSaved?: (flowJson: object) => void;
 }
 
+const BASIC_INFO_MAX_LENGTH = 30;
+
 function getInitialFlow(flowJson: unknown) {
   if (
     flowJson &&
@@ -64,11 +67,30 @@ function getInitialFlow(flowJson: unknown) {
     Array.isArray((flowJson as { nodes: unknown }).nodes) &&
     Array.isArray((flowJson as { edges: unknown }).edges)
   ) {
-    const parsed = flowJson as { nodes: Node<AnyNodeData>[]; edges: Edge[] };
-    return { nodes: parsed.nodes, edges: parsed.edges };
+    const parsed = flowJson as {
+      nodes: Node<AnyNodeData>[];
+      edges: Edge[];
+      basicInfo?: unknown;
+    };
+    return {
+      nodes: parsed.nodes,
+      edges: parsed.edges,
+      basicInfo: parseBasicInfo(parsed.basicInfo),
+    };
   }
 
-  return { nodes: initialNodes, edges: initialEdges };
+  return { nodes: initialNodes, edges: initialEdges, basicInfo: "" };
+}
+
+function parseBasicInfo(value: unknown) {
+  if (typeof value === "string") return value.slice(0, BASIC_INFO_MAX_LENGTH);
+  if (Array.isArray(value)) {
+    return value
+      .filter((line): line is string => typeof line === "string")
+      .join(" ")
+      .slice(0, BASIC_INFO_MAX_LENGTH);
+  }
+  return "";
 }
 
 function syncNodeCounter(nodes: Node[]) {
@@ -96,6 +118,8 @@ export function FlowEditor({
   const [saved, setSaved] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [basicInfoOpen, setBasicInfoOpen] = useState(false);
+  const [basicInfo, setBasicInfo] = useState<string>(initialFlow.basicInfo);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   // ──────── connect
@@ -156,6 +180,11 @@ export function FlowEditor({
     [setNodes, setEdges]
   );
 
+  const handleBasicInfoChange = useCallback((value: string) => {
+    setBasicInfo(value.slice(0, BASIC_INFO_MAX_LENGTH));
+    setSaved(false);
+  }, []);
+
   // ──────── add node from palette (click)
   const handleAddNode = useCallback(
     (type: string, data: Record<string, unknown>) => {
@@ -203,9 +232,12 @@ export function FlowEditor({
   );
 
   // ──────── save
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (options?: { closeBasicInfo?: boolean }) => {
     if (!rfInstance) return;
-    const flow = rfInstance.toObject();
+    const flow = {
+      ...rfInstance.toObject(),
+      basicInfo: basicInfo.trim(),
+    };
     setSaving(true);
     setSaveError(null);
 
@@ -213,17 +245,21 @@ export function FlowEditor({
       await callFlowsApi.update(flowId, { flowJson: flow });
       setSaved(true);
       onSaved?.(flow);
+      if (options?.closeBasicInfo) setBasicInfoOpen(false);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "保存に失敗しました");
     } finally {
       setSaving(false);
     }
-  }, [flowId, onSaved, rfInstance]);
+  }, [basicInfo, flowId, onSaved, rfInstance]);
 
   return (
-    <div className="flex h-full w-full">
+    <div className="relative flex h-full w-full">
       {/* Left: node palette */}
-      <NodePalette onAddNode={handleAddNode} />
+      <NodePalette
+        onAddNode={handleAddNode}
+        onBasicInfoClick={() => setBasicInfoOpen(true)}
+      />
 
       {/* Center: canvas */}
       <div ref={reactFlowWrapper} className="flex-1 relative">
@@ -296,12 +332,12 @@ export function FlowEditor({
               <div className="w-px h-5 bg-gray-200" />
               <Button
                 size="sm"
-                onClick={handleSave}
+                onClick={() => void handleSave()}
                 className={saved ? "opacity-60" : ""}
                 disabled={saved || saving}
               >
                 <Save className="w-3.5 h-3.5 mr-1.5" />
-                {saving ? "保存中..." : saved ? "保存済み" : "保存する"}
+                {saving ? "保存中..." : saved ? "保存済" : "保存"}
               </Button>
             </div>
             {saveError && (
@@ -328,6 +364,52 @@ export function FlowEditor({
           onClose={() => setSelectedNode(null)}
           onDelete={handleDeleteNode}
         />
+      )}
+
+      {basicInfoOpen && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20">
+          <div className="w-[420px] rounded-lg border border-gray-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+              <h2 className="text-sm font-semibold text-gray-900">基本情報</h2>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setBasicInfoOpen(false)}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <div className="p-4">
+              <Label htmlFor="basic-info" className="sr-only">
+                基本情報
+              </Label>
+              <div className="relative">
+                <Textarea
+                  id="basic-info"
+                  value={basicInfo}
+                  maxLength={BASIC_INFO_MAX_LENGTH}
+                  rows={3}
+                  className="pr-12 pb-7"
+                  placeholder="例: 美容院の受付担当です。丁寧に接客してください。"
+                  onChange={(event) => handleBasicInfoChange(event.target.value)}
+                />
+                <span className="pointer-events-none absolute bottom-2 right-3 text-[11px] text-gray-400">
+                  {basicInfo.length}/{BASIC_INFO_MAX_LENGTH}
+                </span>
+              </div>
+            </div>
+            <div className="flex justify-end border-t border-gray-200 px-4 py-3">
+              <Button
+                size="sm"
+                onClick={() => void handleSave({ closeBasicInfo: true })}
+                disabled={saving}
+              >
+                {saving ? "保存中..." : "保存"}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

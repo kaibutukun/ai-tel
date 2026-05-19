@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Building2,
   MessageSquare,
   GitBranch,
   PhoneOff,
@@ -92,9 +93,10 @@ const PALETTE_ITEMS: PaletteItem[] = [
 
 interface NodePaletteProps {
   onAddNode: (type: string, data: Record<string, unknown>) => void;
+  onBasicInfoClick: () => void;
 }
 
-export function NodePalette({ onAddNode }: NodePaletteProps) {
+export function NodePalette({ onAddNode, onBasicInfoClick }: NodePaletteProps) {
   const onDragStart = (
     e: React.DragEvent,
     nodeType: string,
@@ -107,6 +109,18 @@ export function NodePalette({ onAddNode }: NodePaletteProps) {
 
   return (
     <aside className="w-56 bg-white border-r border-gray-200 flex flex-col overflow-y-auto">
+      <div className="px-4 py-3 border-b border-gray-200">
+        <button
+          type="button"
+          onClick={onBasicInfoClick}
+          className="w-full flex items-center gap-3 p-2.5 rounded-lg border border-slate-300 bg-slate-50 text-slate-700 hover:shadow-sm transition-shadow text-left"
+        >
+          <Building2 className="w-4 h-4 flex-shrink-0" />
+          <span className="min-w-0">
+            <span className="block text-xs font-semibold leading-tight">基本情報</span>
+          </span>
+        </button>
+      </div>
       <div className="px-4 py-3 border-b border-gray-200">
         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
           ノードを追加

@@ -10,8 +10,6 @@ import { AnswerQuestionDto } from "./dto/answer-question.dto";
 // AiService
 //
 // 知識源は AWS Bedrock Knowledge Base 一本に統一。
-// 旧実装にあったローカル lexical 検索 (Postgres から FAQ/DocumentChunk を
-// 引いてトークン一致でスコアリング) は廃止。
 //
 // 流れ:
 //   1. クエリ → Bedrock RetrieveCommand で vector 検索
@@ -22,6 +20,10 @@ import { AnswerQuestionDto } from "./dto/answer-question.dto";
 interface KnowledgeSource {
   type: "BEDROCK";
   id?: string;
+  source?: "faq" | "document" | string;
+  faqId?: string;
+  documentId?: string;
+  category?: string;
   title: string;
   content: string;
   score?: number;
@@ -56,6 +58,10 @@ export class AiService {
         sources: sources.map((source) => ({
           type: source.type,
           id: source.id,
+          source: source.source,
+          faqId: source.faqId,
+          documentId: source.documentId,
+          category: source.category,
           title: source.title,
           score: source.score,
           excerpt: source.content.slice(0, 240),
@@ -89,16 +95,23 @@ export class AiService {
           const text = result.content?.text?.trim();
           if (!text) return null;
 
-          // FAQ を Bedrock に入れている場合、answer / category がメタデータに入る
-          type MetaVal = { stringValue?: string };
-          const meta = result.metadata as Record<string, MetaVal> | undefined;
-          const answer = meta?.["answer"]?.stringValue;
-          const category = meta?.["category"]?.stringValue;
+          // FAQ を Bedrock に入れている場合、answer / category / faqId がメタデータに入る
+          const meta = result.metadata as Record<string, unknown> | undefined;
+          const source = this.readMetaString(meta?.["source"]);
+          const answer = this.readMetaString(meta?.["answer"]);
+          const category = this.readMetaString(meta?.["category"]);
+          const faqId = this.readMetaString(meta?.["faqId"]);
+          const documentId = this.readMetaString(meta?.["documentId"]);
           const content = answer ? `質問: ${text}\n回答: ${answer}` : text;
           const title = category ? `FAQ（${category}）` : `参考資料 ${index + 1}`;
 
           return {
             type: "BEDROCK",
+            id: faqId ?? documentId,
+            source,
+            faqId,
+            documentId,
+            category,
             title,
             content,
             score: result.score,
@@ -162,5 +175,14 @@ export class AiService {
   private contextOnlyAnswer(sources: KnowledgeSource[]) {
     const top = sources[0];
     return top.content.length > 600 ? `${top.content.slice(0, 600)}...` : top.content;
+  }
+
+  private readMetaString(value: unknown): string | undefined {
+    if (typeof value === "string") return value;
+    if (!value || typeof value !== "object") return undefined;
+
+    const record = value as Record<string, unknown>;
+    const candidate = record.stringValue ?? record.value;
+    return typeof candidate === "string" ? candidate : undefined;
   }
 }

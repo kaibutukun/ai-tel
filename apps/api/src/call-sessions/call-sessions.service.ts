@@ -27,7 +27,7 @@ export class CallSessionsService {
     ]);
 
     return {
-      data: sessions,
+      data: sessions.map((session) => this.withDerivedDuration(session)),
       meta: { total, page, limit },
     };
   }
@@ -46,6 +46,19 @@ export class CallSessionsService {
       },
     });
     if (!session) throw new NotFoundException("通話セッションが見つかりません");
-    return { data: session };
+    return { data: this.withDerivedDuration(session) };
+  }
+
+  private withDerivedDuration<T extends { startedAt: Date; endedAt?: Date | null; durationSeconds?: number | null }>(
+    session: T
+  ): T {
+    if (session.durationSeconds != null || !session.endedAt) return session;
+    return {
+      ...session,
+      durationSeconds: Math.max(
+        0,
+        Math.round((session.endedAt.getTime() - session.startedAt.getTime()) / 1000)
+      ),
+    };
   }
 }

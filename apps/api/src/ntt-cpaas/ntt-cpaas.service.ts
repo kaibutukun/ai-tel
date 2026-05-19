@@ -113,11 +113,13 @@ export class NttCpaasService {
     });
     if (!session) return { handled: false, reason: "session_not_found", callId };
 
-    const durationSeconds = this.extractDurationSeconds(event);
+    const endedAt = new Date();
+    const durationSeconds =
+      this.extractDurationSeconds(event) ?? this.computeDurationSeconds(session.startedAt, endedAt);
     await this.prisma.callSession.update({
       where: { id: session.id },
       data: {
-        endedAt: new Date(),
+        endedAt,
         durationSeconds,
         result: this.mapCallResult(event.type, Boolean(session.phoneNumber?.transferTo)),
       },
@@ -208,6 +210,10 @@ export class NttCpaasService {
       if (Number.isFinite(parsed)) return parsed;
     }
     return undefined;
+  }
+
+  private computeDurationSeconds(startedAt: Date, endedAt: Date) {
+    return Math.max(0, Math.round((endedAt.getTime() - startedAt.getTime()) / 1000));
   }
 
   private mapCallResult(eventType: string | undefined, transferred: boolean) {

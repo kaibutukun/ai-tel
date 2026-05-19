@@ -37,7 +37,7 @@ const NO_PHONE_NUMBER = "__no_phone_number__";
 
 type CallStatus = "idle" | "connecting" | "connected" | "ended" | "error";
 
-type LogKind = "system" | "assistant" | "tool" | "error";
+type LogKind = "system" | "assistant" | "user" | "tool" | "error";
 
 type CallLog = {
   id: string;
@@ -55,6 +55,8 @@ type DevCallEvent =
       phoneNumberId: string | null;
     }
   | { type: "text_delta"; text: string }
+  | { type: "user_transcript"; text: string }
+  | { type: "assistant_transcript_done"; text: string }
   | { type: "function_call"; callId: string; name: string; arguments: string }
   | {
       type: "tool_result";
@@ -182,6 +184,19 @@ export default function CallTestPage() {
     });
   }, []);
 
+  /** 確定した AI 発話で、ストリーミング途中の assistant バブルを置き換える。
+   * - assistant が直近なら中身を確定文に差し替え
+   * - 既に別 kind が挟まっていれば新規バブルとして追加 */
+  const replaceLatestAssistant = useCallback((text: string) => {
+    setLogs((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.kind === "assistant") {
+        return [...prev.slice(0, -1), { ...last, message: text }];
+      }
+      return [...prev, makeLog("assistant", text)];
+    });
+  }, []);
+
   const cleanupCall = useCallback(() => {
     audioGateOpenRef.current = false;
 
@@ -239,6 +254,13 @@ export default function CallTestPage() {
           break;
         case "text_delta":
           appendAssistantDelta(event.text);
+          break;
+        case "assistant_transcript_done":
+          // 1 ターン分の AI 発話が確定したら、ストリーミング途中のバブルを最終文に置き換える
+          replaceLatestAssistant(event.text);
+          break;
+        case "user_transcript":
+          appendLog("user", event.text);
           break;
         case "function_call":
           appendLog(
@@ -546,39 +568,55 @@ export default function CallTestPage() {
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
               <div className="flex items-center gap-2">
                 <Activity className="h-4 w-4 text-blue-600" />
-                <h2 className="text-sm font-semibold text-gray-900">応答ログ</h2>
+                <h2 className="text-sm font-semibold text-gray-900">通話ログ</h2>
               </div>
               <span className="text-xs text-gray-500">音声応答はスピーカーから再生されます</span>
             </div>
             <div className="h-[520px] overflow-y-auto p-5 space-y-3">
-              {logs.map((log) => (
-                <div
-                  key={log.id}
-                  className={
-                    log.kind === "assistant"
-                      ? "rounded-lg bg-blue-50 p-3"
-                      : log.kind === "tool"
-                        ? "rounded-lg bg-amber-50 p-3"
-                        : log.kind === "error"
-                          ? "rounded-lg bg-red-50 p-3"
-                          : "rounded-lg bg-gray-50 p-3"
-                  }
-                >
-                  <div className="mb-1 flex items-center justify-between gap-3">
-                    <span className="text-xs font-medium text-gray-500">
-                      {log.kind === "assistant"
-                        ? "AI"
-                        : log.kind === "tool"
-                          ? "ツール"
-                          : log.kind === "error"
-                            ? "エラー"
-                            : "システム"}
-                    </span>
-                    <span className="text-xs text-gray-400">{log.time}</span>
+              {logs.map((log) => {
+                if (log.kind === "user") {
+                  return (
+                    <div key={log.id} className="flex justify-end">
+                      <div className="max-w-[75%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2 text-white shadow-sm">
+                        <p className="whitespace-pre-wrap text-sm leading-6">{log.message}</p>
+                        <p className="mt-1 text-right text-[10px] text-blue-100">
+                          お客様 ・ {log.time}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+                if (log.kind === "assistant") {
+                  return (
+                    <div key={log.id} className="flex justify-start">
+                      <div className="max-w-[75%] rounded-2xl rounded-tl-sm bg-gray-100 px-4 py-2 text-gray-900 shadow-sm">
+                        <p className="whitespace-pre-wrap text-sm leading-6">{log.message}</p>
+                        <p className="mt-1 text-[10px] text-gray-500">AI ・ {log.time}</p>
+                      </div>
+                    </div>
+                  );
+                }
+                const chipColor =
+                  log.kind === "error"
+                    ? "bg-red-50 text-red-700 border-red-100"
+                    : log.kind === "tool"
+                      ? "bg-amber-50 text-amber-800 border-amber-100"
+                      : "bg-gray-50 text-gray-600 border-gray-100";
+                const chipLabel =
+                  log.kind === "error" ? "エラー" : log.kind === "tool" ? "ツール" : "システム";
+                return (
+                  <div key={log.id} className="flex justify-center">
+                    <div
+                      className={`max-w-[85%] rounded-md border px-3 py-2 text-xs ${chipColor}`}
+                    >
+                      <p className="mb-0.5 text-[10px] opacity-70">
+                        {chipLabel} ・ {log.time}
+                      </p>
+                      <p className="whitespace-pre-wrap leading-5">{log.message}</p>
+                    </div>
                   </div>
-                  <p className="whitespace-pre-wrap text-sm leading-6 text-gray-800">{log.message}</p>
-                </div>
-              ))}
+                );
+              })}
               <div ref={logEndRef} />
             </div>
           </div>

@@ -79,6 +79,8 @@ export class OpenAIRealtimeClient {
 
   /** 進行中の function call の引数を accumulate するためのバッファ */
   private functionCallBuffer = new Map<string, { name: string; arguments: string }>();
+  /** output_item.done / response.done と arguments.done の二重発火を防ぐ */
+  private emittedFunctionCallIds = new Set<string>();
 
   /** session.updated を待つための pending */
   private sessionUpdatePending: { resolve: () => void; reject: (e: Error) => void } | null = null;
@@ -307,6 +309,7 @@ export class OpenAIRealtimeClient {
       case "response.done":
       case "response.cancelled":
         this.responseActive = false;
+        this.emitFunctionCallsFromResponse(event);
         this.emit("responseDone", event);
         break;
       case "session.updated": {
@@ -370,7 +373,11 @@ export class OpenAIRealtimeClient {
         const name = (event.name as string | undefined) ?? fallback?.name ?? "";
         const args = (event.arguments as string | undefined) ?? fallback?.arguments ?? "{}";
         this.functionCallBuffer.delete(callId);
-        this.emit("functionCall", { callId, name, arguments: args });
+        this.emitFunctionCallOnce({ callId, name, arguments: args });
+        break;
+      }
+      case "response.output_item.done": {
+        this.emitFunctionCallFromItem(event.item);
         break;
       }
       case "error": {
@@ -411,5 +418,32 @@ export class OpenAIRealtimeClient {
   private toGaAudioFormat(format: RealtimeAudioFormat) {
     if (format === "pcm16") return { type: "audio/pcm", rate: 24000 };
     return { type: "audio/pcmu" };
+  }
+
+  private emitFunctionCallsFromResponse(event: OpenAIRealtimeEvent) {
+    const response = event.response as Record<string, unknown> | undefined;
+    const output = response?.output;
+    if (!Array.isArray(output)) return;
+    for (const item of output) this.emitFunctionCallFromItem(item);
+  }
+
+  private emitFunctionCallFromItem(rawItem: unknown) {
+    if (!rawItem || typeof rawItem !== "object") return;
+    const item = rawItem as Record<string, unknown>;
+    if (item.type !== "function_call") return;
+
+    const callId = item.call_id as string | undefined;
+    const name = item.name as string | undefined;
+    if (!callId || !name) return;
+
+    const args = typeof item.arguments === "string" ? item.arguments : "{}";
+    this.emitFunctionCallOnce({ callId, name, arguments: args });
+  }
+
+  private emitFunctionCallOnce(call: FunctionCallEvent) {
+    if (this.emittedFunctionCallIds.has(call.callId)) return;
+    this.emittedFunctionCallIds.add(call.callId);
+    this.functionCallBuffer.delete(call.callId);
+    this.emit("functionCall", call);
   }
 }

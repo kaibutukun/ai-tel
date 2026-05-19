@@ -83,23 +83,46 @@ export default function CallLogDetailPage({ params }: { params: { id: string } }
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <MessageSquare className="w-5 h-5" />文字起こし
+                <MessageSquare className="w-5 h-5" />通話ログ
               </CardTitle>
             </CardHeader>
             <CardContent>
               {log.transcripts.length > 0 ? (
-                <div className="space-y-3 max-h-72 overflow-y-auto pr-2">
-                  {log.transcripts.map((t, i) => (
-                    <div key={i} className={`flex gap-3 ${t.speaker === "AI" ? "" : "flex-row-reverse"}`}>
-                      <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${t.speaker === "AI" ? "bg-blue-100" : "bg-gray-100"}`}>
-                        {t.speaker === "AI" ? <Bot className="w-4 h-4 text-blue-600" /> : <User className="w-4 h-4 text-gray-600" />}
+                <div className="space-y-3 max-h-[520px] overflow-y-auto pr-2">
+                  {log.transcripts.map((t, i) => {
+                    const isAi = t.speaker === "AI";
+                    const ts = `${t.timestamp.toFixed(1)}秒`;
+                    return (
+                      <div
+                        key={i}
+                        className={`flex items-end gap-2 ${isAi ? "" : "flex-row-reverse"}`}
+                      >
+                        <div
+                          className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${isAi ? "bg-blue-100" : "bg-blue-600"}`}
+                        >
+                          {isAi ? (
+                            <Bot className="w-4 h-4 text-blue-600" />
+                          ) : (
+                            <User className="w-4 h-4 text-white" />
+                          )}
+                        </div>
+                        <div
+                          className={`max-w-[75%] rounded-2xl px-4 py-2 text-sm shadow-sm ${
+                            isAi
+                              ? "rounded-tl-sm bg-gray-100 text-gray-900"
+                              : "rounded-tr-sm bg-blue-600 text-white"
+                          }`}
+                        >
+                          <p className="whitespace-pre-wrap leading-6">{t.content}</p>
+                          <p
+                            className={`mt-1 text-[10px] ${isAi ? "text-gray-500" : "text-blue-100 text-right"}`}
+                          >
+                            {isAi ? "AI" : "お客様"} ・ {ts}
+                          </p>
+                        </div>
                       </div>
-                      <div className={`flex-1 rounded-lg px-3 py-2 text-sm ${t.speaker === "AI" ? "bg-blue-50" : "bg-gray-50 text-right"}`}>
-                        <p>{t.content}</p>
-                        <p className="text-xs text-gray-400 mt-1">{t.timestamp}秒</p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="text-sm text-gray-400">文字起こしデータがありません</p>
