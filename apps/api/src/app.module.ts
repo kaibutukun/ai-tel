@@ -2,6 +2,9 @@ import { Module, NestModule, MiddlewareConsumer } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { APP_GUARD } from "@nestjs/core";
 import { JwtModule } from "@nestjs/jwt";
+import { config as loadEnv } from "dotenv";
+import { existsSync } from "fs";
+import { join } from "path";
 import { PrismaModule } from "./prisma/prisma.module";
 import { LoggerMiddleware } from "./common/middleware/logger.middleware";
 import { RequestIdMiddleware } from "./common/middleware/request-id.middleware";
@@ -22,9 +25,25 @@ import { AiModule } from "./ai/ai.module";
 import { NttCpaasModule } from "./ntt-cpaas/ntt-cpaas.module";
 import { RealtimeModule } from "./realtime/realtime.module";
 
+const API_ENV_FILE_PATHS = [
+  join(process.cwd(), "apps/api/.env"),
+  join(process.cwd(), ".env"),
+  join(__dirname, "../.env"),
+  join(__dirname, "../../.env"),
+];
+
+const apiEnvPath = API_ENV_FILE_PATHS.find((path) => existsSync(path));
+if (apiEnvPath) {
+  loadEnv({ path: apiEnvPath, override: true });
+  process.env.API_ENV_FILE_LOADED_FROM = apiEnvPath;
+}
+
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: API_ENV_FILE_PATHS,
+    }),
     // JWT をグローバルに登録 — 全モジュールから JwtService を DI 可能
     JwtModule.register({
       global: true,

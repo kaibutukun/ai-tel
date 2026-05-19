@@ -35,6 +35,8 @@ export interface RealtimeSessionConfig {
   };
 }
 
+type RealtimeAudioFormat = RealtimeSessionConfig["inputAudioFormat"];
+
 export type OpenAIRealtimeEvent = Record<string, unknown> & { type: string };
 
 export interface OpenAIRealtimeClientEvents {
@@ -42,10 +44,18 @@ export interface OpenAIRealtimeClientEvents {
   event: (event: OpenAIRealtimeEvent) => void;
   audioDelta: (audioBase64: string) => void;
   audioDone: () => void;
+  /** AI の発話テキスト(transcript)の差分。output_modalities=["audio"] でも届く */
   textDelta: (text: string) => void;
+  /** AI 応答の transcript が確定したタイミング(1応答分の完全テキスト) */
+  responseTranscriptDone: (transcript: string) => void;
   responseDone: (response: OpenAIRealtimeEvent) => void;
+  responseCreated: () => void;
   functionCall: (call: FunctionCallEvent) => void;
   speechStarted: () => void;
+  speechStopped: () => void;
+  /** お客様発話の書き起こしが確定したタイミング */
+  userTranscript: (transcript: string) => void;
+  sessionUpdated: () => void;
   error: (err: Error) => void;
   close: (code: number, reason: string) => void;
 }
@@ -69,6 +79,15 @@ export class OpenAIRealtimeClient {
 
   /** 進行中の function call の引数を accumulate するためのバッファ */
   private functionCallBuffer = new Map<string, { name: string; arguments: string }>();
+
+  /** session.updated を待つための pending */
+  private sessionUpdatePending: { resolve: () => void; reject: (e: Error) => void } | null = null;
+  /** モデル側で response が現在 active か */
+  private responseActive = false;
+  /** session.update 適用前に来た入力音声を一時保管するキュー。session.updated で flush。 */
+  private pendingInputAudio: string[] = [];
+  /** session.updated を受信済みか。これが true になるまで input audio は送らない。 */
+  private sessionReady = false;
 
   constructor(
     private readonly apiKey: string,
@@ -96,11 +115,9 @@ export class OpenAIRealtimeClient {
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       const url = `${OPENAI_REALTIME_URL}?model=${encodeURIComponent(this.model)}`;
-      // OpenAI-Beta ヘッダは GA 後も明示しておくと安全
       this.ws = new WebSocket(url, {
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
-          "OpenAI-Beta": "realtime=v1",
         },
       });
 
@@ -130,34 +147,77 @@ export class OpenAIRealtimeClient {
     });
   }
 
-  /** セッション設定。接続後すぐ呼ぶ */
-  updateSession(config: RealtimeSessionConfig) {
+  /**
+   * セッション設定。接続後すぐ呼ぶ。
+   * session.updated を受信するまで await できる Promise を返す。
+   * これを await してから response.create を打たないと、デフォルトセッション
+   * (instructions/tools 無し) で応答が始まる可能性がある。
+   */
+  updateSession(config: RealtimeSessionConfig): Promise<void> {
+    // 前回の pending があれば破棄(通常は無いが安全のため)
+    if (this.sessionUpdatePending) {
+      this.sessionUpdatePending.reject(new Error("superseded by new session.update"));
+      this.sessionUpdatePending = null;
+    }
+
+    const promise = new Promise<void>((resolve, reject) => {
+      this.sessionUpdatePending = { resolve, reject };
+      // 5秒で fail-safe (タイムアウトしても resolve はせず reject)
+      setTimeout(() => {
+        if (this.sessionUpdatePending) {
+          const pending = this.sessionUpdatePending;
+          this.sessionUpdatePending = null;
+          pending.reject(new Error("session.updated timeout"));
+        }
+      }, 5000);
+    });
+
     this.send({
       type: "session.update",
       session: {
+        type: "realtime",
         instructions: config.instructions,
-        voice: config.voice ?? "alloy",
-        input_audio_format: config.inputAudioFormat ?? "g711_ulaw",
-        output_audio_format: config.outputAudioFormat ?? "g711_ulaw",
-        // server VAD: モデル側で発話区間検出と割り込みを行う
-        turn_detection: {
-          type: config.turnDetection?.type ?? "server_vad",
-          threshold: config.turnDetection?.threshold ?? 0.5,
-          prefix_padding_ms: config.turnDetection?.prefixPaddingMs ?? 300,
-          silence_duration_ms: config.turnDetection?.silenceDurationMs ?? 500,
+        audio: {
+          input: {
+            format: this.toGaAudioFormat(config.inputAudioFormat ?? "g711_ulaw"),
+            transcription: { model: "gpt-4o-mini-transcribe" },
+            // server VAD: モデル側で発話区間検出と割り込みを行う
+            turn_detection: {
+              type: config.turnDetection?.type ?? "server_vad",
+              threshold: config.turnDetection?.threshold ?? 0.5,
+              prefix_padding_ms: config.turnDetection?.prefixPaddingMs ?? 300,
+              silence_duration_ms: config.turnDetection?.silenceDurationMs ?? 500,
+            },
+          },
+          output: {
+            format: this.toGaAudioFormat(config.outputAudioFormat ?? "g711_ulaw"),
+            voice: config.voice ?? "alloy",
+          },
         },
-        // 音声＋テキスト両方をモデルが扱える状態にする（ログ取り用）
-        modalities: ["audio", "text"],
+        output_modalities: ["audio"],
         tools: config.tools,
         tool_choice: "auto",
-        // 文字起こし（後で会話ログ保存に使える）
-        input_audio_transcription: { model: "whisper-1" },
       },
     });
+
+    return promise;
   }
 
-  /** CPaaS 経由のお客様音声を投入 */
+  /** 現在 response が active かどうか(speechStarted で cancel すべきかの判定用) */
+  isResponseActive() {
+    return this.responseActive;
+  }
+
+  /** CPaaS 経由のお客様音声を投入。session.update 前に来た分はキューに溜めて後で flush。 */
   appendInputAudio(base64Audio: string) {
+    if (!this.sessionReady) {
+      // 上限を設けてメモリ暴走を防ぐ (24kHz/20ms フレームで 1000 個 ≈ 20 秒分)
+      this.pendingInputAudio.push(base64Audio);
+      if (this.pendingInputAudio.length > 1000) {
+        this.pendingInputAudio.shift();
+      }
+      return;
+    }
     this.send({
       type: "input_audio_buffer.append",
       audio: base64Audio,
@@ -171,13 +231,13 @@ export class OpenAIRealtimeClient {
       item: {
         type: "message",
         role: "assistant",
-        content: [{ type: "text", text }],
+        content: [{ type: "output_text", text }],
       },
     });
     // 注入したメッセージを音声化して再生
     this.send({
       type: "response.create",
-      response: { modalities: ["audio", "text"] },
+      response: { output_modalities: ["audio"] },
     });
   }
 
@@ -193,16 +253,19 @@ export class OpenAIRealtimeClient {
     });
     this.send({
       type: "response.create",
-      response: { modalities: ["audio", "text"] },
+      response: { output_modalities: ["audio"] },
     });
   }
 
   /** ユーザー発話の割り込み発生時、進行中の応答をキャンセル */
   cancelResponse() {
+    if (!this.responseActive) return;
     this.send({ type: "response.cancel" });
   }
 
   close() {
+    this.sessionReady = false;
+    this.pendingInputAudio = [];
     try {
       this.ws?.close();
     } catch {
@@ -218,27 +281,79 @@ export class OpenAIRealtimeClient {
     this.emit("event", event);
 
     switch (event.type) {
+      case "response.output_audio.delta":
       case "response.audio.delta": {
         const audio = event.delta as string | undefined;
         if (audio) this.emit("audioDelta", audio);
         break;
       }
+      case "response.output_audio.done":
       case "response.audio.done":
         this.emit("audioDone");
         break;
       case "response.text.delta":
-      case "response.output_text.delta": {
+      case "response.output_text.delta":
+      // GA gpt-realtime で audio-only モダリティ時に AI 発話テキストが届くイベント
+      case "response.output_audio_transcript.delta":
+      case "response.audio_transcript.delta": {
         const text = (event.delta as string | undefined) ?? "";
         if (text) this.emit("textDelta", text);
         break;
       }
+      case "response.created":
+        this.responseActive = true;
+        this.emit("responseCreated");
+        break;
       case "response.done":
+      case "response.cancelled":
+        this.responseActive = false;
         this.emit("responseDone", event);
         break;
+      case "session.updated": {
+        this.sessionReady = true;
+        // session 適用前に届いた入力音声を、正しいフォーマット設定下で OpenAI に流す
+        const flushed = this.pendingInputAudio.splice(0);
+        if (flushed.length > 0) {
+          this.logger.log(
+            `Flushing ${flushed.length} buffered input audio chunks after session.updated`
+          );
+          for (const audio of flushed) {
+            this.send({ type: "input_audio_buffer.append", audio });
+          }
+        }
+        const pending = this.sessionUpdatePending;
+        if (pending) {
+          this.sessionUpdatePending = null;
+          pending.resolve();
+        }
+        this.emit("sessionUpdated");
+        break;
+      }
       case "input_audio_buffer.speech_started":
         // ユーザーが喋り始めた → 呼び出し側で再生中音声をクリアする
         this.emit("speechStarted");
         break;
+      case "input_audio_buffer.speech_stopped":
+        this.emit("speechStopped");
+        break;
+      case "conversation.item.input_audio_transcription.completed": {
+        const transcript = (event.transcript as string | undefined) ?? "";
+        if (transcript) this.emit("userTranscript", transcript);
+        break;
+      }
+      case "conversation.item.input_audio_transcription.failed": {
+        const err =
+          ((event.error as Record<string, unknown> | undefined)?.message as string | undefined) ||
+          "input audio transcription failed";
+        this.logger.warn(`user transcription failed: ${err}`);
+        break;
+      }
+      case "response.output_audio_transcript.done":
+      case "response.audio_transcript.done": {
+        const transcript = (event.transcript as string | undefined) ?? "";
+        if (transcript) this.emit("responseTranscriptDone", transcript);
+        break;
+      }
       case "response.function_call_arguments.delta": {
         const callId = event.call_id as string;
         const name = (event.name as string | undefined) ?? "";
@@ -259,9 +374,23 @@ export class OpenAIRealtimeClient {
         break;
       }
       case "error": {
-        const message =
-          ((event.error as Record<string, unknown> | undefined)?.message as string | undefined) ||
-          "OpenAI Realtime error";
+        const errObj = event.error as Record<string, unknown> | undefined;
+        const code = errObj?.code as string | undefined;
+        const message = (errObj?.message as string | undefined) || "OpenAI Realtime error";
+
+        // 「もう active じゃない response への cancel」は無害(turn_detection で既に
+        // 自動キャンセル済み等)。エラーログを汚すだけなので静かに飲み込む。
+        if (code === "response_cancel_not_active") {
+          this.logger.debug(`Ignored cancel race: ${message}`);
+          break;
+        }
+
+        // OpenAI からのエラーは原因究明のために全体を残す。
+        try {
+          this.logger.error(`OpenAI error event payload: ${JSON.stringify(event)}`);
+        } catch {
+          this.logger.error("OpenAI error event payload (unserializable)");
+        }
         this.emit("error", new Error(message));
         break;
       }
@@ -277,5 +406,10 @@ export class OpenAIRealtimeClient {
       return;
     }
     this.ws.send(JSON.stringify(payload));
+  }
+
+  private toGaAudioFormat(format: RealtimeAudioFormat) {
+    if (format === "pcm16") return { type: "audio/pcm", rate: 24000 };
+    return { type: "audio/pcmu" };
   }
 }
