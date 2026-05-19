@@ -23,8 +23,10 @@ export interface ToolContext {
     transferTo?: string;
     notifyTarget?: string;
   };
-  /** rag ノードに設定された "正確さ" の閾値 (0.5〜0.9) */
-  ragPrecision: number;
+  /** FAQ ノードに設定された検索閾値 (0.5〜0.9) */
+  faqMinScore: number;
+  /** 資料検索ノードの検索閾値 */
+  documentMinScore: number;
   /** 情報収集ノードごとの必須項目 */
   collectRequirements: CollectRequirement[];
 }
@@ -55,12 +57,6 @@ type KnowledgeToolSource = {
 };
 
 type KnowledgeUsageContext = Pick<ToolContext, "companyId" | "callSessionId">;
-type DbFaqCandidate = {
-  id: string;
-  category: string | null;
-  question: string;
-  answer: string;
-};
 
 @Injectable()
 export class ToolExecutorService {
@@ -282,116 +278,28 @@ export class ToolExecutorService {
     try {
       // FAQ も Bedrock 検索を共通利用（rag と同じ knowledge base に
       // FAQ も流し込んでいる前提）。閾値は rag の precision を共有。
-      const result = await this.ai.answer({
-        companyId: ctx.companyId,
-        question: query,
-        minScore: ctx.ragPrecision,
-      });
-      if (result.data.sources.length > 0) {
-        await this.persistKnowledgeUsage("faq", result.data.sources, ctx);
-        return {
-          output: {
-            ok: true,
-            answer: result.data.answer,
-            sources: result.data.sources,
-          },
-        };
-      }
-
-      const fallback = await this.lookupFaqFromDatabase(query, ctx);
-      await this.persistKnowledgeUsage("faq", fallback.sources, ctx);
+      const result = await this.ai.answer(
+        {
+          companyId: ctx.companyId,
+          question: query,
+          minScore: ctx.faqMinScore,
+        },
+        { maxSources: 2, strictMinScore: true }
+      );
+      await this.persistKnowledgeUsage("faq", result.data.sources, ctx);
+      const hasSources = result.data.sources.length > 0;
       return {
         output: {
-          ok: fallback.sources.length > 0,
-          answer:
-            fallback.answer ??
-            "登録FAQに該当する情報が見つかりませんでした。",
-          sources: fallback.sources,
+          ok: hasSources,
+          answer: hasSources
+            ? result.data.answer
+            : "登録FAQに該当する情報が見つかりませんでした。",
+          sources: result.data.sources,
         },
       };
     } catch (err) {
-      const fallback = await this.lookupFaqFromDatabase(query, ctx);
-      await this.persistKnowledgeUsage("faq", fallback.sources, ctx);
-      if (fallback.sources.length > 0) {
-        return {
-          output: {
-            ok: true,
-            answer: fallback.answer,
-            sources: fallback.sources,
-          },
-        };
-      }
       return { output: { ok: false, error: (err as Error).message } };
     }
-  }
-
-  private async lookupFaqFromDatabase(query: string, ctx: ToolContext) {
-    const faqs = await this.prisma.fAQ.findMany({
-      where: { companyId: ctx.companyId, isActive: true },
-      select: { id: true, category: true, question: true, answer: true },
-      take: 100,
-    });
-
-    const ranked = faqs
-      .map((faq) => ({ faq, score: this.scoreFaqMatch(query, faq) }))
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
-
-    const top = ranked[0];
-    return {
-      answer: top?.faq.answer,
-      sources: ranked.map(({ faq, score }) => ({
-        type: "DATABASE",
-        id: faq.id,
-        source: "faq",
-        faqId: faq.id,
-        category: faq.category ?? undefined,
-        title: faq.category ? `FAQ（${faq.category}）` : "FAQ",
-        score,
-        excerpt: `質問: ${faq.question}\n回答: ${faq.answer}`.slice(0, 240),
-      })),
-    };
-  }
-
-  private scoreFaqMatch(query: string, faq: DbFaqCandidate) {
-    const normalizedQuery = this.normalizeForSearch(query);
-    if (!normalizedQuery) return 0;
-
-    const haystack = this.normalizeForSearch(
-      [faq.category, faq.question, faq.answer].filter(Boolean).join(" ")
-    );
-    if (!haystack) return 0;
-
-    let score = 0;
-    if (haystack.includes(normalizedQuery)) score += 1;
-    if (faq.category && normalizedQuery.includes(this.normalizeForSearch(faq.category))) {
-      score += 0.35;
-    }
-
-    const grams = this.ngrams(normalizedQuery, normalizedQuery.length <= 4 ? 2 : 3);
-    if (grams.length > 0) {
-      const hits = grams.filter((gram) => haystack.includes(gram)).length;
-      score += hits / grams.length;
-    }
-
-    return Number(score.toFixed(3));
-  }
-
-  private normalizeForSearch(value: string) {
-    return value
-      .toLowerCase()
-      .replace(/[\s　:：・,，、。.!！?？「」『』（）()【】\[\]\-ー]/g, "")
-      .trim();
-  }
-
-  private ngrams(value: string, size: number) {
-    if (value.length < size) return value ? [value] : [];
-    const grams: string[] = [];
-    for (let i = 0; i <= value.length - size; i += 1) {
-      grams.push(value.slice(i, i + size));
-    }
-    return Array.from(new Set(grams));
   }
 
   private async handleLookupDocuments(
@@ -405,7 +313,7 @@ export class ToolExecutorService {
       const result = await this.ai.answer({
         companyId: ctx.companyId,
         question: query,
-        minScore: ctx.ragPrecision,
+        minScore: ctx.documentMinScore,
       });
       await this.persistKnowledgeUsage("document", result.data.sources, ctx);
       return {

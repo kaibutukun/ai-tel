@@ -1,13 +1,15 @@
 import { Injectable, Logger } from "@nestjs/common";
 import {
   ActionNodeData,
+  BASIC_INFO_MAX_LENGTH,
   ConditionNodeData,
+  DOCUMENT_MIN_SCORE_DEFAULT,
   EndNodeData,
+  FAQ_MIN_SCORE_DEFAULT,
   FlowEdge,
   FlowGraph,
   FlowNode,
   MessageNodeData,
-  RAG_PRECISION_DEFAULT,
   isFlowGraph,
 } from "./flow-types";
 
@@ -20,8 +22,8 @@ import {
 // 設計方針:
 //   - LLM がマスター、フローは "あらすじ"。
 //   - ノードは「補足発話」「ツール呼び出し」「分岐ヒント」「終了」のいずれかとして文章化する。
-//   - ツール (book_appointment / transfer_call / send_notification /
-//     lookup_faq / lookup_documents) はフローに登場する actionType に応じて
+//   - ツール (transfer_call / send_notification / submit_collected_info /
+//     lookup_faq / lookup_documents / end_call) はフローに登場する actionType に応じて
 //     動的に露出する。
 // ─────────────────────────────────────────────────────────────
 
@@ -36,8 +38,10 @@ export interface CompiledFlow {
   openingLockedMessage: string | null;
   /** デフォルトの終了メッセージ（end ノード未到達時のフォールバック） */
   defaultEndMessage: string;
-  /** rag ノードの精度設定（複数あれば最も低い = 最も網羅的なものを採用） */
-  ragPrecision: number;
+  /** FAQ ノードの検索閾値（複数あれば最も低い = 最も網羅的なものを採用） */
+  faqMinScore: number;
+  /** 資料検索ノードの検索閾値。現状は固定値。 */
+  documentMinScore: number;
 }
 
 export interface CollectRequirement {
@@ -101,9 +105,9 @@ export class FlowCompilerService {
       (endNodes[0]?.data as EndNodeData | undefined)?.endMessage ||
       "お電話ありがとうございました。";
 
-    // FAQ/RAG ノードの精度: 複数あれば最低値（最も網羅的）を採用。
+    // FAQ ノードの精度: 複数あれば最低値（最も網羅的）を採用。
     // 「厳しい設定が混ざってると全体が厳しくなる」のを避けるため。
-    const ragPrecision = this.resolveRagPrecision(graph);
+    const faqMinScore = this.resolveFaqMinScore(graph);
 
     const tools = this.buildTools(graph);
     const collectRequirements = this.buildCollectRequirements(graph);
@@ -114,7 +118,8 @@ export class FlowCompilerService {
       collectRequirements,
       openingLockedMessage,
       defaultEndMessage,
-      ragPrecision,
+      faqMinScore,
+      documentMinScore: DOCUMENT_MIN_SCORE_DEFAULT,
     };
   }
 
@@ -129,7 +134,8 @@ export class FlowCompilerService {
       collectRequirements: [],
       openingLockedMessage: null,
       defaultEndMessage: "お電話ありがとうございました。",
-      ragPrecision: RAG_PRECISION_DEFAULT,
+      faqMinScore: FAQ_MIN_SCORE_DEFAULT,
+      documentMinScore: DOCUMENT_MIN_SCORE_DEFAULT,
     };
   }
 
@@ -147,7 +153,7 @@ export class FlowCompilerService {
 
   private buildBasicInfo(value?: string | string[]): string | null {
     const raw = Array.isArray(value) ? value.filter(Boolean).join(" ") : value;
-    const cleaned = raw?.trim().slice(0, 30);
+    const cleaned = raw?.trim().slice(0, BASIC_INFO_MAX_LENGTH);
     if (!cleaned) return null;
 
     return [
@@ -333,17 +339,16 @@ export class FlowCompilerService {
     return null;
   }
 
-  /** FAQ/RAG ノードの precision を集約。複数あれば最低値、無ければ既定値。 */
-  private resolveRagPrecision(graph: FlowGraph): number {
-    const ragNodes = graph.nodes.filter(
+  /** FAQ ノードの precision を集約。複数あれば最低値、無ければ既定値。 */
+  private resolveFaqMinScore(graph: FlowGraph): number {
+    const faqNodes = graph.nodes.filter(
       (n) =>
-        n.type === "action" &&
-        ["faq", "rag"].includes((n.data as ActionNodeData).actionType)
+        n.type === "action" && (n.data as ActionNodeData).actionType === "faq"
     );
-    const values = ragNodes
+    const values = faqNodes
       .map((n) => (n.data as ActionNodeData).precision)
       .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
-    if (values.length === 0) return RAG_PRECISION_DEFAULT;
+    if (values.length === 0) return FAQ_MIN_SCORE_DEFAULT;
     return Math.min(...values);
   }
 

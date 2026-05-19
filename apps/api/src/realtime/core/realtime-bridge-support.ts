@@ -95,7 +95,8 @@ export class Pcm16BargeInDetector {
 }
 
 export interface RealtimeToolLogContext {
-  ragPrecision: number;
+  faqMinScore: number;
+  documentMinScore: number;
   transferTo?: string;
   notifyTarget?: string;
 }
@@ -122,13 +123,16 @@ export function logToolNodeEntry(
       const query = String(args.query ?? "");
       logger.log(
         `${tag} 📚 [RAG ノード] lookup_documents query="${clip(query, 120)}" ` +
-          `minScore=${context.ragPrecision}`
+          `minScore=${context.documentMinScore}`
       );
       return;
     }
     case "lookup_faq": {
       const query = String(args.query ?? "");
-      logger.log(`${tag} ❓ [FAQ ノード] lookup_faq query="${clip(query, 120)}"`);
+      logger.log(
+        `${tag} ❓ [FAQ ノード] lookup_faq query="${clip(query, 120)}" ` +
+          `minScore>${context.faqMinScore}`
+      );
       return;
     }
     case "submit_collected_info": {
@@ -193,9 +197,11 @@ export function logToolNodeResult(
       const icon = toolName === "lookup_documents" ? "📚" : "❓";
       const label = toolName === "lookup_documents" ? "RAG" : "FAQ";
       if (sources.length === 0) {
+        const minScore =
+          toolName === "lookup_documents" ? context.documentMinScore : context.faqMinScore;
         logger.warn(
           `${tag} ${icon} [${label} ノード結果] ${okMark} hits=0 (${elapsedMs}ms) ` +
-            `→ minScore=${context.ragPrecision} で全件フィルタされている可能性`
+            `→ minScore=${minScore} で全件フィルタされている可能性`
         );
       } else {
         logger.log(

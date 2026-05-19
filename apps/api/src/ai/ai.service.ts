@@ -3,7 +3,6 @@ import {
   BedrockAgentRuntimeClient,
   RetrieveCommand,
 } from "@aws-sdk/client-bedrock-agent-runtime";
-import { PrismaService } from "../prisma/prisma.service";
 import { AnswerQuestionDto } from "./dto/answer-question.dto";
 
 // ─────────────────────────────────────────────────────────────
@@ -13,7 +12,7 @@ import { AnswerQuestionDto } from "./dto/answer-question.dto";
 //
 // 流れ:
 //   1. クエリ → Bedrock RetrieveCommand で vector 検索
-//   2. minScore 未満の結果は捨てる（ノードの "正確さ" パラメータで制御）
+//   2. minScore 条件に満たない結果は捨てる（ノードの "正確さ" パラメータで制御）
 //   3. 残った sources を context として OpenAI に渡し、最終回答文を生成
 // ─────────────────────────────────────────────────────────────
 
@@ -29,6 +28,13 @@ interface KnowledgeSource {
   score?: number;
 }
 
+interface AnswerOptions {
+  /** 参照に使う上位件数。指定しなければ全候補を使う。 */
+  maxSources?: number;
+  /** true の場合、score は minScore 以上ではなく minScore 超過のみ採用する。 */
+  strictMinScore?: boolean;
+}
+
 const DEFAULT_MIN_SCORE = 0.7;
 
 @Injectable()
@@ -38,17 +44,23 @@ export class AiService {
       ? new BedrockAgentRuntimeClient({ region: process.env.AWS_REGION })
       : null;
 
-  constructor(private readonly prisma: PrismaService) {}
-
-  async answer(dto: AnswerQuestionDto) {
+  async answer(dto: AnswerQuestionDto, options: AnswerOptions = {}) {
     const question = dto.question.trim();
     const minScore = dto.minScore ?? DEFAULT_MIN_SCORE;
 
-    // Bedrock は最大10件取りに行き、minScore でフィルタする
+    // Bedrock は最大10件取りに行き、score 条件でフィルタする
     const all = await this.retrieveFromBedrock(question, 10);
-    const sources = all
-      .filter((s) => (s.score ?? 0) >= minScore)
-      .slice(0, 8);
+    const matchedSources = all
+      .filter((s) =>
+        options.strictMinScore
+          ? (s.score ?? 0) > minScore
+          : (s.score ?? 0) >= minScore
+      )
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const sources =
+      options.maxSources === undefined
+        ? matchedSources
+        : matchedSources.slice(0, options.maxSources);
 
     const answer = await this.generateAnswer(question, sources);
 

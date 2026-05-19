@@ -22,8 +22,10 @@ export interface BridgeContext {
   callerNumber?: string;
   transferTo?: string;
   notifyTarget?: string;
-  /** rag ノードに設定された精度。FlowCompiler が解決した値が入る。 */
-  ragPrecision: number;
+  /** FAQ ノードに設定された検索閾値。FlowCompiler が解決した値が入る。 */
+  faqMinScore: number;
+  /** 資料検索ノードの検索閾値。FlowCompiler が解決した値が入る。 */
+  documentMinScore: number;
 }
 
 export interface BridgeDeps {
@@ -126,7 +128,8 @@ export class RealtimeBridge {
       `${this.tag} compiled flow: instructions=${this.compiled.instructions.length}chars ` +
         `tools=[${this.compiled.tools.map((t) => t.name).join(", ")}] ` +
         `opening=${this.compiled.openingLockedMessage ? "locked" : "default"} ` +
-        `ragPrecision=${this.context.ragPrecision} ` +
+        `faqMinScore=${this.context.faqMinScore} ` +
+        `documentMinScore=${this.context.documentMinScore} ` +
         `echoGuard=${this.echoGuardMs}ms`
     );
     // フローの中身が空でAIが意味不明になるケース対策に、頭だけ確認できるよう先頭 240 文字を出す
@@ -337,7 +340,8 @@ export class RealtimeBridge {
           transferTo: this.context.transferTo,
           notifyTarget: this.context.notifyTarget,
         },
-        ragPrecision: this.context.ragPrecision,
+        faqMinScore: this.context.faqMinScore,
+        documentMinScore: this.context.documentMinScore,
         collectRequirements: this.compiled.collectRequirements,
       };
       const startedAt = Date.now();
@@ -413,7 +417,8 @@ export class RealtimeBridge {
 
   private logContext() {
     return {
-      ragPrecision: this.context.ragPrecision,
+      faqMinScore: this.context.faqMinScore,
+      documentMinScore: this.context.documentMinScore,
       transferTo: this.context.transferTo,
       notifyTarget: this.context.notifyTarget,
     };

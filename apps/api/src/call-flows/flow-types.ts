@@ -56,7 +56,7 @@ export interface ActionNodeData {
   actionType: ActionType;
   fields?: string[];
   target?: string;
-  /** rag 用: ベクトル類似度の閾値 (0.5〜0.9)。デフォルト 0.7。 */
+  /** faq 用: ベクトル類似度の閾値 (0.5〜0.9)。デフォルト 0.7。 */
   precision?: number;
 }
 
@@ -81,8 +81,9 @@ export interface FlowGraph {
   basicInfo?: string | string[];
 }
 
-// rag の精度パラメータの既定値
-export const RAG_PRECISION_DEFAULT = 0.7;
+export const BASIC_INFO_MAX_LENGTH = 30;
+export const FAQ_MIN_SCORE_DEFAULT = 0.7;
+export const DOCUMENT_MIN_SCORE_DEFAULT = 0.7;
 
 // フロー JSON が想定どおりの形か簡易検証
 export function isFlowGraph(value: unknown): value is FlowGraph {

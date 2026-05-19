@@ -165,7 +165,8 @@ export class RealtimeService implements OnApplicationShutdown {
         callSessionId,
         transferTo,
         notifyTarget,
-        ragPrecision: compiled.ragPrecision,
+        faqMinScore: compiled.faqMinScore,
+        documentMinScore: compiled.documentMinScore,
       },
       {
         openAiApiKey: apiKey,
@@ -275,7 +276,8 @@ export class RealtimeService implements OnApplicationShutdown {
         callSessionId: session.id,
         callerNumber: start.callerNumber ?? "dev-browser",
         transferTo,
-        ragPrecision: compiled.ragPrecision,
+        faqMinScore: compiled.faqMinScore,
+        documentMinScore: compiled.documentMinScore,
       },
       {
         openAiApiKey: apiKey,
