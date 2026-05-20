@@ -3,7 +3,6 @@ import {
   BedrockAgentRuntimeClient,
   RetrieveCommand,
 } from "@aws-sdk/client-bedrock-agent-runtime";
-import { PrismaService } from "../prisma/prisma.service";
 import { AnswerQuestionDto } from "./dto/answer-question.dto";
 
 // ─────────────────────────────────────────────────────────────
@@ -38,7 +37,7 @@ export class AiService {
       ? new BedrockAgentRuntimeClient({ region: process.env.AWS_REGION })
       : null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor() {}
 
   async answer(dto: AnswerQuestionDto) {
     const question = dto.question.trim();

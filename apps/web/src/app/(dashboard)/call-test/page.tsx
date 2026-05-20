@@ -129,9 +129,7 @@ export default function CallTestPage() {
   const [status, setStatus] = useState<CallStatus>("idle");
   const [muted, setMuted] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(true);
-  const [logs, setLogs] = useState<CallLog[]>([
-    makeLog("system", "開始するとブラウザのマイクで開発用の疑似通話を開始します。"),
-  ]);
+  const [logs, setLogs] = useState<CallLog[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const inputContextRef = useRef<AudioContext | null>(null);
@@ -470,6 +468,14 @@ export default function CallTestPage() {
   useEffect(() => {
     void reloadSettings();
   }, [reloadSettings]);
+
+  useEffect(() => {
+    setLogs((prev) =>
+      prev.length > 0
+        ? prev
+        : [makeLog("system", "開始するとブラウザのマイクで開発用の疑似通話を開始します。")]
+    );
+  }, []);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });

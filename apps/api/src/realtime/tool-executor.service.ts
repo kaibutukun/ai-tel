@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AiService } from "../ai/ai.service";
-import { CollectRequirement } from "../call-flows/flow-compiler.service";
+import type { ActionType } from "../call-flows/flow-types";
 
 // ─────────────────────────────────────────────────────────────
 // ToolExecutorService
@@ -25,8 +25,15 @@ export interface ToolContext {
   };
   /** rag ノードに設定された "正確さ" の閾値 (0.5〜0.9) */
   ragPrecision: number;
-  /** 情報収集ノードごとの必須項目 */
-  collectRequirements: CollectRequirement[];
+  /** Brain が現在いる action node。ツールの既定値と必須項目はここから解決する。 */
+  activeAction?: ToolActiveAction;
+}
+
+export interface ToolActiveAction {
+  nodeId: string;
+  type: ActionType;
+  fields?: string[];
+  target?: string;
 }
 
 export interface ToolCallPayload {
@@ -55,12 +62,6 @@ type KnowledgeToolSource = {
 };
 
 type KnowledgeUsageContext = Pick<ToolContext, "companyId" | "callSessionId">;
-type DbFaqCandidate = {
-  id: string;
-  category: string | null;
-  question: string;
-  answer: string;
-};
 
 @Injectable()
 export class ToolExecutorService {
@@ -104,7 +105,11 @@ export class ToolExecutorService {
     args: Record<string, unknown>,
     ctx: ToolContext
   ): ToolExecutionResult {
-    const to = String(args.to ?? ctx.defaults.transferTo ?? "");
+    if (ctx.activeAction?.type !== "transfer") {
+      return { output: { ok: false, error: "transfer_call is not active for current node" } };
+    }
+
+    const to = String(args.to ?? ctx.activeAction.target ?? ctx.defaults.transferTo ?? "");
     const reason = args.reason ? String(args.reason) : undefined;
     if (!to) {
       return { output: { ok: false, error: "転送先が設定されていません" } };
@@ -120,9 +125,17 @@ export class ToolExecutorService {
     args: Record<string, unknown>,
     ctx: ToolContext
   ): Promise<ToolExecutionResult> {
-    const target = String(args.target ?? ctx.defaults.notifyTarget ?? "");
+    if (ctx.activeAction?.type !== "notify") {
+      return { output: { ok: false, error: "send_notification is not active for current node" } };
+    }
+
+    const target = String(args.target ?? ctx.activeAction.target ?? ctx.defaults.notifyTarget ?? "");
     const subject = args.subject ? String(args.subject) : "AI通話: 通知";
     const body = String(args.body ?? "");
+
+    if (!target) {
+      return { output: { ok: false, error: "通知先が設定されていません" } };
+    }
 
     // 実際の送信プロバイダ統合（メール/Slack）は今後実装。現状はログ記録のみ。
     this.logger.log(
@@ -154,22 +167,23 @@ export class ToolExecutorService {
     args: Record<string, unknown>,
     ctx: ToolContext
   ): Promise<ToolExecutionResult> {
+    if (ctx.activeAction?.type !== "collect") {
+      return {
+        output: { ok: false, error: "submit_collected_info is not active for current node" },
+      };
+    }
+
     const submittedFields = args.fields as Record<string, unknown> | undefined;
     if (!submittedFields) {
       return { output: { ok: false, error: "fields is required" } };
     }
 
     const previousFields = await this.loadCollectedFields(ctx.callSessionId);
-    const requirement = this.resolveCollectRequirement(
-      { ...previousFields, ...submittedFields },
-      submittedFields,
-      ctx.collectRequirements
-    );
+    const requiredFields = (ctx.activeAction.fields ?? []).filter(Boolean);
     const fields = {
       ...previousFields,
-      ...this.canonicalizeCollectedFields(submittedFields, requirement),
+      ...this.canonicalizeCollectedFields(submittedFields, requiredFields),
     };
-    const requiredFields = requirement?.fields ?? [];
     const missingFields = requiredFields.filter((field) => !this.hasCollectedValue(fields[field]));
 
     if (ctx.callSessionId) {
@@ -222,35 +236,14 @@ export class ToolExecutorService {
     }
   }
 
-  private resolveCollectRequirement(
-    mergedFields: Record<string, unknown>,
-    submittedFields: Record<string, unknown>,
-    requirements: CollectRequirement[]
-  ) {
-    if (requirements.length === 0) return null;
-    if (requirements.length === 1) return requirements[0];
-
-    const submittedNames = Object.keys(submittedFields).map((field) => this.normalizeFieldName(field));
-    const mergedNames = Object.keys(mergedFields).map((field) => this.normalizeFieldName(field));
-
-    return requirements
-      .map((requirement, index) => {
-        const requiredNames = requirement.fields.map((field) => this.normalizeFieldName(field));
-        const submittedOverlap = submittedNames.filter((field) => requiredNames.includes(field)).length;
-        const mergedOverlap = mergedNames.filter((field) => requiredNames.includes(field)).length;
-        return { requirement, index, score: submittedOverlap * 10 + mergedOverlap };
-      })
-      .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.requirement ?? requirements[0];
-  }
-
   private canonicalizeCollectedFields(
     submittedFields: Record<string, unknown>,
-    requirement: CollectRequirement | null
+    requiredFields: string[]
   ) {
-    if (!requirement) return submittedFields;
+    if (requiredFields.length === 0) return submittedFields;
 
     const canonicalByNormalized = new Map(
-      requirement.fields.map((field) => [this.normalizeFieldName(field), field])
+      requiredFields.map((field) => [this.normalizeFieldName(field), field])
     );
 
     return Object.fromEntries(
@@ -276,128 +269,40 @@ export class ToolExecutorService {
     args: Record<string, unknown>,
     ctx: ToolContext
   ): Promise<ToolExecutionResult> {
+    if (ctx.activeAction?.type !== "faq") {
+      return { output: { ok: false, error: "lookup_faq is not active for current node" } };
+    }
+
     const query = String(args.query ?? "");
     if (!query) return { output: { ok: false, error: "query is required" } };
 
     try {
-      // FAQ も Bedrock 検索を共通利用（rag と同じ knowledge base に
-      // FAQ も流し込んでいる前提）。閾値は rag の precision を共有。
       const result = await this.ai.answer({
         companyId: ctx.companyId,
         question: query,
         minScore: ctx.ragPrecision,
       });
-      if (result.data.sources.length > 0) {
-        await this.persistKnowledgeUsage("faq", result.data.sources, ctx);
-        return {
-          output: {
-            ok: true,
-            answer: result.data.answer,
-            sources: result.data.sources,
-          },
-        };
-      }
-
-      const fallback = await this.lookupFaqFromDatabase(query, ctx);
-      await this.persistKnowledgeUsage("faq", fallback.sources, ctx);
+      await this.persistKnowledgeUsage("faq", result.data.sources, ctx);
       return {
         output: {
-          ok: fallback.sources.length > 0,
-          answer:
-            fallback.answer ??
-            "登録FAQに該当する情報が見つかりませんでした。",
-          sources: fallback.sources,
+          ok: result.data.sources.length > 0,
+          answer: result.data.answer,
+          sources: result.data.sources,
         },
       };
     } catch (err) {
-      const fallback = await this.lookupFaqFromDatabase(query, ctx);
-      await this.persistKnowledgeUsage("faq", fallback.sources, ctx);
-      if (fallback.sources.length > 0) {
-        return {
-          output: {
-            ok: true,
-            answer: fallback.answer,
-            sources: fallback.sources,
-          },
-        };
-      }
       return { output: { ok: false, error: (err as Error).message } };
     }
-  }
-
-  private async lookupFaqFromDatabase(query: string, ctx: ToolContext) {
-    const faqs = await this.prisma.fAQ.findMany({
-      where: { companyId: ctx.companyId, isActive: true },
-      select: { id: true, category: true, question: true, answer: true },
-      take: 100,
-    });
-
-    const ranked = faqs
-      .map((faq) => ({ faq, score: this.scoreFaqMatch(query, faq) }))
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
-
-    const top = ranked[0];
-    return {
-      answer: top?.faq.answer,
-      sources: ranked.map(({ faq, score }) => ({
-        type: "DATABASE",
-        id: faq.id,
-        source: "faq",
-        faqId: faq.id,
-        category: faq.category ?? undefined,
-        title: faq.category ? `FAQ（${faq.category}）` : "FAQ",
-        score,
-        excerpt: `質問: ${faq.question}\n回答: ${faq.answer}`.slice(0, 240),
-      })),
-    };
-  }
-
-  private scoreFaqMatch(query: string, faq: DbFaqCandidate) {
-    const normalizedQuery = this.normalizeForSearch(query);
-    if (!normalizedQuery) return 0;
-
-    const haystack = this.normalizeForSearch(
-      [faq.category, faq.question, faq.answer].filter(Boolean).join(" ")
-    );
-    if (!haystack) return 0;
-
-    let score = 0;
-    if (haystack.includes(normalizedQuery)) score += 1;
-    if (faq.category && normalizedQuery.includes(this.normalizeForSearch(faq.category))) {
-      score += 0.35;
-    }
-
-    const grams = this.ngrams(normalizedQuery, normalizedQuery.length <= 4 ? 2 : 3);
-    if (grams.length > 0) {
-      const hits = grams.filter((gram) => haystack.includes(gram)).length;
-      score += hits / grams.length;
-    }
-
-    return Number(score.toFixed(3));
-  }
-
-  private normalizeForSearch(value: string) {
-    return value
-      .toLowerCase()
-      .replace(/[\s　:：・,，、。.!！?？「」『』（）()【】\[\]\-ー]/g, "")
-      .trim();
-  }
-
-  private ngrams(value: string, size: number) {
-    if (value.length < size) return value ? [value] : [];
-    const grams: string[] = [];
-    for (let i = 0; i <= value.length - size; i += 1) {
-      grams.push(value.slice(i, i + size));
-    }
-    return Array.from(new Set(grams));
   }
 
   private async handleLookupDocuments(
     args: Record<string, unknown>,
     ctx: ToolContext
   ): Promise<ToolExecutionResult> {
+    if (ctx.activeAction?.type !== "rag") {
+      return { output: { ok: false, error: "lookup_documents is not active for current node" } };
+    }
+
     const query = String(args.query ?? "");
     if (!query) return { output: { ok: false, error: "query is required" } };
 

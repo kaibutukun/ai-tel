@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws";
 import WebSocket = require("ws");
 import { PrismaService } from "../prisma/prisma.service";
 import { FlowCompilerService } from "../call-flows/flow-compiler.service";
+import { SupervisorService } from "../supervisor/supervisor.service";
 import { ToolExecutorService } from "./tool-executor.service";
 import {
   BridgeObserverEvent,
@@ -36,7 +37,8 @@ export class RealtimeService implements OnApplicationShutdown {
   constructor(
     private readonly prisma: PrismaService,
     private readonly compiler: FlowCompilerService,
-    private readonly toolExecutor: ToolExecutorService
+    private readonly toolExecutor: ToolExecutorService,
+    private readonly supervisor: SupervisorService
   ) {}
 
   /**
@@ -147,6 +149,8 @@ export class RealtimeService implements OnApplicationShutdown {
       }
     }
 
+    const brainModel = await this.resolveBrainModel(companyId);
+
     let callSessionId: string | null = explicitSessionId ?? null;
     if (!callSessionId && providerCallId) {
       const session = await this.prisma.callSession.findFirst({
@@ -165,11 +169,12 @@ export class RealtimeService implements OnApplicationShutdown {
         callSessionId,
         transferTo,
         notifyTarget,
-        ragPrecision: compiled.ragPrecision,
+        brainModel,
       },
       {
         openAiApiKey: apiKey,
         toolExecutor: this.toolExecutor,
+        supervisor: this.supervisor,
         saveTranscript: (data) => this.persistTranscript(data),
         markSessionEnded: (data) => this.markSessionEnded(data),
       }
@@ -263,6 +268,8 @@ export class RealtimeService implements OnApplicationShutdown {
       select: { id: true },
     });
 
+    const brainModel = await this.resolveBrainModel(companyId);
+
     // ⚠️ レース回避: bridge を先に作って message listener を貼ってから
     // "started" を送る。逆順だとクライアントが "started" 受信直後に流す
     // 音声フレームの一部が listener 不在で消滅する。
@@ -275,11 +282,12 @@ export class RealtimeService implements OnApplicationShutdown {
         callSessionId: session.id,
         callerNumber: start.callerNumber ?? "dev-browser",
         transferTo,
-        ragPrecision: compiled.ragPrecision,
+        brainModel,
       },
       {
         openAiApiKey: apiKey,
         toolExecutor: this.toolExecutor,
+        supervisor: this.supervisor,
         onEvent: (event) => this.sendDevBridgeEvent(ws, event),
         saveTranscript: (data) => this.persistTranscript(data),
         markSessionEnded: (data) => this.markSessionEnded(data),
@@ -452,6 +460,20 @@ export class RealtimeService implements OnApplicationShutdown {
       this.logger.warn(
         `Failed to mark session ended for ${data.callSessionId}: ${(err as Error).message}`
       );
+    }
+  }
+
+  /** Company.brainModel を読み出す。null/未取得時は null を返し、Supervisor 側で env/既定にフォールバックさせる。 */
+  private async resolveBrainModel(companyId: string): Promise<string | null> {
+    try {
+      const company = await this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { brainModel: true },
+      });
+      return company?.brainModel ?? null;
+    } catch (err) {
+      this.logger.warn(`Failed to resolve brainModel for ${companyId}: ${(err as Error).message}`);
+      return null;
     }
   }
 

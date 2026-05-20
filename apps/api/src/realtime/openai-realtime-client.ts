@@ -32,6 +32,16 @@ export interface RealtimeSessionConfig {
     threshold?: number;
     prefixPaddingMs?: number;
     silenceDurationMs?: number;
+    /**
+     * server_vad で発話終了を検出した時に自動で response.create するか。
+     * Brain の判断を挟むため false にする。response.create は Director から手動で呼ぶ。
+     */
+    createResponse?: boolean;
+    /**
+     * ユーザーが話し始めた時に進行中の応答を自動で割り込みキャンセルするか。
+     * 「問答無用で黙る」を担保するため true (既定値) で運用。
+     */
+    interruptResponse?: boolean;
   };
 }
 
@@ -183,12 +193,16 @@ export class OpenAIRealtimeClient {
           input: {
             format: this.toGaAudioFormat(config.inputAudioFormat ?? "g711_ulaw"),
             transcription: { model: "gpt-4o-mini-transcribe" },
-            // server VAD: モデル側で発話区間検出と割り込みを行う
+            // server VAD: モデル側で発話区間検出と割り込みを行う。
+            // create_response=false で「ユーザー発話終了 → 自動応答」を抑止する。
+            // 自動応答するとBrainの判断を挟む間がなくなるため。
             turn_detection: {
               type: config.turnDetection?.type ?? "server_vad",
               threshold: config.turnDetection?.threshold ?? 0.5,
               prefix_padding_ms: config.turnDetection?.prefixPaddingMs ?? 300,
               silence_duration_ms: config.turnDetection?.silenceDurationMs ?? 500,
+              create_response: config.turnDetection?.createResponse ?? false,
+              interrupt_response: config.turnDetection?.interruptResponse ?? true,
             },
           },
           output: {
@@ -241,6 +255,35 @@ export class OpenAIRealtimeClient {
       type: "response.create",
       response: { output_modalities: ["audio"] },
     });
+  }
+
+  /**
+   * Brain (監督役) からの system note を会話文脈に挿入する。
+   * 応答は自動では始まらない (create_response=false 構成のため)。
+   * 必要があれば呼び出し側で createResponse() を続けて呼ぶこと。
+   */
+  injectSystemNote(text: string) {
+    if (!text.trim()) return;
+    this.send({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "system",
+        content: [{ type: "input_text", text }],
+      },
+    });
+  }
+
+  /**
+   * Director が「今このタイミングで応答せよ」と決めた時に呼ぶ。
+   * create_response=false なので、これを呼ばない限り Speaker は喋らない。
+   */
+  createResponse(extraInstructions?: string) {
+    const response: Record<string, unknown> = { output_modalities: ["audio"] };
+    if (extraInstructions && extraInstructions.trim()) {
+      response.instructions = extraInstructions;
+    }
+    this.send({ type: "response.create", response });
   }
 
   /** ツール呼び出しの結果をモデルに返し、続きの応答を促す */
