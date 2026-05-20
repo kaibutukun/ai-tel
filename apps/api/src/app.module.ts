@@ -1,74 +1,53 @@
 import { Module, NestModule, MiddlewareConsumer } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
+import { ConfigModule, ConfigService } from "@nestjs/config";
 import { APP_GUARD } from "@nestjs/core";
 import { JwtModule } from "@nestjs/jwt";
-import { config as loadEnv } from "dotenv";
-import { existsSync } from "fs";
-import { join } from "path";
-import { PrismaModule } from "./prisma/prisma.module";
+import {
+  API_ENV_FILE_PATHS,
+  appConfig,
+  preloadApiEnv,
+} from "./config/app.config";
+import { validateEnv } from "./config/env.schema";
 import { LoggerMiddleware } from "./common/middleware/logger.middleware";
 import { RequestIdMiddleware } from "./common/middleware/request-id.middleware";
 import { JwtAuthGuard } from "./common/guards/jwt-auth.guard";
-import { AuthModule } from "./auth/auth.module";
-import { HealthModule } from "./health/health.module";
-import { CompaniesModule } from "./companies/companies.module";
-import { PhoneNumbersModule } from "./phone-numbers/phone-numbers.module";
-import { FaqsModule } from "./faqs/faqs.module";
-import { DocumentsModule } from "./documents/documents.module";
-import { CallFlowsModule } from "./call-flows/call-flows.module";
-import { CallSessionsModule } from "./call-sessions/call-sessions.module";
-import { SubscriptionsModule } from "./subscriptions/subscriptions.module";
-import { AdminModule } from "./admin/admin.module";
-import { MembersModule } from "./members/members.module";
-import { DashboardModule } from "./dashboard/dashboard.module";
-import { AiModule } from "./ai/ai.module";
-import { NttCpaasModule } from "./ntt-cpaas/ntt-cpaas.module";
-import { RealtimeModule } from "./realtime/realtime.module";
+import { HealthModule } from "./modules/health/health.module";
+import { IdentityModule } from "./modules/identity/identity.module";
+import { TenantModule } from "./modules/tenant/tenant.module";
+import { VoiceModule } from "./modules/voice/voice.module";
+import { KnowledgeModule } from "./modules/knowledge/knowledge.module";
+import { BillingModule } from "./modules/billing/billing.module";
+import { AnalyticsModule } from "./modules/analytics/analytics.module";
+import { PlatformAdminModule } from "./modules/platform-admin/platform-admin.module";
 
-const API_ENV_FILE_PATHS = [
-  join(process.cwd(), "apps/api/.env"),
-  join(process.cwd(), ".env"),
-  join(__dirname, "../.env"),
-  join(__dirname, "../../.env"),
-];
-
-const apiEnvPath = API_ENV_FILE_PATHS.find((path) => existsSync(path));
-if (apiEnvPath) {
-  loadEnv({ path: apiEnvPath, override: true });
-  process.env.API_ENV_FILE_LOADED_FROM = apiEnvPath;
-}
+preloadApiEnv();
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: API_ENV_FILE_PATHS,
+      load: [appConfig],
+      validate: validateEnv,
     }),
-    // JWT をグローバルに登録 — 全モジュールから JwtService を DI 可能
-    JwtModule.register({
+    JwtModule.registerAsync({
       global: true,
-      secret: process.env.JWT_SECRET ?? "dev-secret-change-in-production",
-      signOptions: { expiresIn: "7d" },
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>("app.jwtSecret"),
+        signOptions: { expiresIn: config.get<string>("app.jwtExpiresIn") },
+      }),
     }),
-    PrismaModule,
-    AuthModule,
     HealthModule,
-    CompaniesModule,
-    PhoneNumbersModule,
-    FaqsModule,
-    DocumentsModule,
-    CallFlowsModule,
-    CallSessionsModule,
-    SubscriptionsModule,
-    AdminModule,
-    MembersModule,
-    DashboardModule,
-    AiModule,
-    NttCpaasModule,
-    RealtimeModule,
+    IdentityModule,
+    TenantModule,
+    VoiceModule,
+    KnowledgeModule,
+    BillingModule,
+    AnalyticsModule,
+    PlatformAdminModule,
   ],
   providers: [
-    // グローバルガードとして登録（DI が正しく機能する）
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,

@@ -1,10 +1,11 @@
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import type { Server as HttpServer } from "http";
 import { AppModule } from "./app.module";
 import { TimeoutInterceptor } from "./common/interceptors/timeout.interceptor";
-import { AllExceptionsFilter } from "./common/filters/http-exception.filter";
-import { RealtimeService } from "./realtime/realtime.service";
+import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
+import { RealtimeService } from "./modules/voice/realtime/realtime.service";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -12,9 +13,10 @@ async function bootstrap() {
   });
 
   app.setGlobalPrefix("api");
+  const config = app.get(ConfigService);
 
   app.enableCors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: config.get<string>("app.frontendUrl") ?? "http://localhost:3000",
     credentials: true,
   });
 
@@ -34,7 +36,7 @@ async function bootstrap() {
   // Nest のシャットダウンフック有効化（RealtimeService が WS を綺麗に閉じる）
   app.enableShutdownHooks();
 
-  const port = process.env.PORT || 3001;
+  const port = config.get<number>("app.port") ?? 3001;
   await app.listen(port);
 
   // NTT CPaaS WebSocket endpoint 用 WebSocket を同一 HTTP サーバーに乗せる。

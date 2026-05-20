@@ -3,24 +3,16 @@ import {
   CanActivate,
   ExecutionContext,
   UnauthorizedException,
-  SetMetadata,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { JwtService } from "@nestjs/jwt";
-import { Request } from "express";
+import { IS_PUBLIC_KEY } from "../decorators/public.decorator";
+import {
+  AuthenticatedRequest,
+  JwtPayload,
+} from "../types/authenticated-request";
 
-export const IS_PUBLIC_KEY = "isPublic";
-/** コントローラー/ハンドラーに付けると JWT チェックをスキップする */
-export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
-
-/** JWT ペイロードの型 */
-export interface JwtPayload {
-  sub: string;
-  email: string;
-  companyId: string | null;
-  role: string | null;
-  adminRole: boolean;
-}
+export type { JwtPayload } from "../types/authenticated-request";
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -37,7 +29,7 @@ export class JwtAuthGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    const request = context.switchToHttp().getRequest<Request>();
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const token = this.extractToken(request);
 
     if (!token) {
@@ -49,7 +41,7 @@ export class JwtAuthGuard implements CanActivate {
     try {
       const payload = this.jwtService.verify<JwtPayload>(token);
       // リクエストオブジェクトにユーザー情報を付与（後続ハンドラーで参照可能）
-      request["user"] = payload;
+      request.user = payload;
     } catch {
       if (process.env.NODE_ENV !== "production") return true;
       throw new UnauthorizedException("無効または期限切れのトークンです");
@@ -58,7 +50,7 @@ export class JwtAuthGuard implements CanActivate {
     return true;
   }
 
-  private extractToken(request: Request): string | undefined {
+  private extractToken(request: AuthenticatedRequest): string | undefined {
     const [type, token] = request.headers.authorization?.split(" ") ?? [];
     return type === "Bearer" ? token : undefined;
   }
