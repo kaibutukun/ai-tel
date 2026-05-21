@@ -37,6 +37,12 @@ export class FaqsController {
     return this.faqsService.create(dto);
   }
 
+  /** DB にあるが Bedrock に未登録の FAQ を一括で再 ingest する救済エンドポイント。 */
+  @Post("resync")
+  resync(@Query("companyId") companyId?: string) {
+    return this.faqsService.resyncAllToBedrock(companyId);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string) {
     return this.faqsService.findOne(id);

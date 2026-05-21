@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import {
   BedrockAgentRuntimeClient,
   RetrieveCommand,
@@ -35,10 +35,12 @@ interface AnswerOptions {
   strictMinScore?: boolean;
 }
 
-const DEFAULT_MIN_SCORE = 0.7;
+// Bedrock の cosine 類似度スコアは 0.3〜0.5 が「関連性あり」帯。0.7 は事実上ヒットしない。
+const DEFAULT_MIN_SCORE = 0.3;
 
 @Injectable()
 export class AiService {
+  private readonly logger = new Logger(AiService.name);
   private readonly bedrockClient =
     process.env.AWS_REGION && process.env.BEDROCK_KNOWLEDGE_BASE_ID
       ? new BedrockAgentRuntimeClient({ region: process.env.AWS_REGION })
@@ -48,19 +50,30 @@ export class AiService {
     const question = dto.question.trim();
     const minScore = dto.minScore ?? DEFAULT_MIN_SCORE;
 
-    // Bedrock は最大10件取りに行き、score 条件でフィルタする
-    const all = await this.retrieveFromBedrock(question, 10);
-    const matchedSources = all
-      .filter((s) =>
-        options.strictMinScore
-          ? (s.score ?? 0) > minScore
-          : (s.score ?? 0) >= minScore
-      )
-      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    // Bedrock は最大10件取りに行き、score 条件でフィルタする。
+    // 同じ KB を複数 company で共有しているため companyId メタで絞り込まないと
+    // 他社の FAQ が混入する (例: テスト目的で入れた無関係 FAQ が上位を取ってしまう)。
+    const all = await this.retrieveFromBedrock(question, 10, dto.companyId);
+    const sortedAll = [...all].sort(
+      (a, b) => (b.score ?? 0) - (a.score ?? 0)
+    );
+    const topScore = sortedAll[0]?.score ?? 0;
+    const matchedSources = sortedAll.filter((s) =>
+      options.strictMinScore
+        ? (s.score ?? 0) > minScore
+        : (s.score ?? 0) >= minScore
+    );
     const sources =
       options.maxSources === undefined
         ? matchedSources
         : matchedSources.slice(0, options.maxSources);
+
+    this.logger.log(
+      `KB query="${question.slice(0, 80)}" raw=${all.length} ` +
+        `matched=${matchedSources.length} returned=${sources.length} ` +
+        `minScore=${minScore}${options.strictMinScore ? "(strict)" : ""} ` +
+        `topScore=${topScore.toFixed(3)}`
+    );
 
     const answer = await this.generateAnswer(question, sources);
 
@@ -78,6 +91,14 @@ export class AiService {
           score: source.score,
           excerpt: source.content.slice(0, 240),
         })),
+        meta: {
+          rawHits: all.length,
+          matchedHits: matchedSources.length,
+          returnedHits: sources.length,
+          minScore,
+          strictMinScore: Boolean(options.strictMinScore),
+          topScore,
+        },
       },
     };
   }
@@ -87,7 +108,11 @@ export class AiService {
    * Bedrock 側で「クエリのエンベディング → 内蔵 vector DB で類似検索」を行うため、
    * こちらのアプリ側でのエンベディング処理は不要。
    */
-  private async retrieveFromBedrock(question: string, numResults = 10): Promise<KnowledgeSource[]> {
+  private async retrieveFromBedrock(
+    question: string,
+    numResults = 10,
+    companyId?: string
+  ): Promise<KnowledgeSource[]> {
     const knowledgeBaseId = process.env.BEDROCK_KNOWLEDGE_BASE_ID;
     if (!this.bedrockClient || !knowledgeBaseId) return [];
 
@@ -97,7 +122,19 @@ export class AiService {
           knowledgeBaseId,
           retrievalQuery: { text: question },
           retrievalConfiguration: {
-            vectorSearchConfiguration: { numberOfResults: numResults },
+            vectorSearchConfiguration: {
+              numberOfResults: numResults,
+              ...(companyId
+                ? {
+                    filter: {
+                      equals: {
+                        key: "companyId",
+                        value: companyId,
+                      },
+                    },
+                  }
+                : {}),
+            },
           },
         })
       );

@@ -2,9 +2,12 @@ export class Pcm16BargeInDetector {
   private consecutiveSpeechFrames = 0;
   private lastInterruptAt = 0;
 
+  // 既定値は「AI 応答の冒頭で環境音 / 息遣い / マイクオン直後のノイズで誤発火しない」ことを優先。
+  // OpenAI 側にも server_vad があり、speech_started イベントは別経路で来るので、
+  // local barge-in は OpenAI が反応するまでの保険として控えめに振っている。
   private readonly options = {
-    rmsThreshold: this.readPositiveNumber("REALTIME_BARGE_IN_RMS_THRESHOLD", 650),
-    minConsecutiveFrames: this.readPositiveNumber("REALTIME_BARGE_IN_MIN_FRAMES", 2),
+    rmsThreshold: this.readPositiveNumber("REALTIME_BARGE_IN_RMS_THRESHOLD", 1200),
+    minConsecutiveFrames: this.readPositiveNumber("REALTIME_BARGE_IN_MIN_FRAMES", 3),
     cooldownMs: this.readPositiveNumber("REALTIME_BARGE_IN_COOLDOWN_MS", 900),
   };
 

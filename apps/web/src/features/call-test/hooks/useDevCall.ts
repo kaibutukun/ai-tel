@@ -28,9 +28,15 @@ export function useDevCall() {
   const [status, setStatus] = useState<CallStatus>("idle");
   const [muted, setMuted] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(true);
-  const [logs, setLogs] = useState<CallLog[]>([
-    makeLog("system", "開始するとブラウザのマイクで開発用の疑似通話を開始します。"),
-  ]);
+  const [logs, setLogs] = useState<CallLog[]>([]);
+
+  useEffect(() => {
+    setLogs((prev) =>
+      prev.length === 0
+        ? [makeLog("system", "開始するとブラウザのマイクで開発用の疑似通話を開始します。")]
+        : prev,
+    );
+  }, []);
 
   const wsRef = useRef<WebSocket | null>(null);
   const mutedRef = useRef(false);

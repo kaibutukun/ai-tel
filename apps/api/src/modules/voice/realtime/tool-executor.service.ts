@@ -1,34 +1,26 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../../../database/prisma.service";
 import { AiService } from "../../knowledge/ai-answering/ai.service";
-import { CollectRequirement } from "../call-flows/application/flow-compiler.service";
+import { FlowEngineService } from "../call-flows/application/flow-engine.service";
+import { FlowSnapshot } from "../call-flows/application/flow-runtime.types";
 
 // ─────────────────────────────────────────────────────────────
-// ToolExecutorService
+// ToolExecutorService (新コア)
 //
-// OpenAI Realtime から飛んでくる function call を実際に処理する場所。
-// 副作用（DB書き込み・転送指示・通知）はここに集約する。
+// Realtime API から飛んでくる function call をバックエンドの責務に翻訳する。
 //
-// 戻り値は OpenAI に function_call_output として戻すため、必ず JSON
-// シリアライズ可能な形にすること。
+// 設計原則:
+//   - フロー状態 (currentNode, slots, allowedNextNodes) の正本は FlowEngine。
+//     このサービスは Engine を呼ぶだけで、状態判定はしない。
+//   - 副作用 (DB / 検索 / 転送 / 終了) はここに集約する。
+//   - すべての戻り値に snapshot を含める。Realtime はこれを根拠に次を判断する。
 // ─────────────────────────────────────────────────────────────
 
 export interface ToolContext {
+  callSessionId: string;
   companyId: string;
-  callSessionId: string | null;
   callFlowId: string | null;
   callerNumber?: string;
-  /** transfer 等のために台本に書かれている既定値 */
-  defaults: {
-    transferTo?: string;
-    notifyTarget?: string;
-  };
-  /** FAQ ノードに設定された検索閾値 (0.5〜0.9) */
-  faqMinScore: number;
-  /** 資料検索ノードの検索閾値 */
-  documentMinScore: number;
-  /** 情報収集ノードごとの必須項目 */
-  collectRequirements: CollectRequirement[];
 }
 
 export interface ToolCallPayload {
@@ -38,15 +30,13 @@ export interface ToolCallPayload {
 }
 
 export interface ToolExecutionResult {
-  /** モデルへ返す結果（function_call_output） */
   output: Record<string, unknown>;
-  /** 通話側で取るべきアクション（呼び出し側で判定する） */
   sideEffect?:
     | { kind: "transfer"; to: string; reason?: string }
     | { kind: "end_call"; reason?: string };
 }
 
-type KnowledgeToolSource = {
+type KnowledgeSourceLite = {
   id?: string;
   source?: string;
   faqId?: string;
@@ -56,59 +46,203 @@ type KnowledgeToolSource = {
   score?: number;
 };
 
-type KnowledgeUsageContext = Pick<ToolContext, "companyId" | "callSessionId">;
-
 @Injectable()
 export class ToolExecutorService {
   private readonly logger = new Logger(ToolExecutorService.name);
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly ai: AiService
+    private readonly ai: AiService,
+    private readonly engine: FlowEngineService
   ) {}
 
-  async execute(call: ToolCallPayload, ctx: ToolContext): Promise<ToolExecutionResult> {
-    let args: Record<string, unknown> = {};
-    try {
-      args = call.arguments ? (JSON.parse(call.arguments) as Record<string, unknown>) : {};
-    } catch (err) {
-      this.logger.warn(`Failed to parse tool args (${call.name}): ${(err as Error).message}`);
-    }
+  async execute(
+    call: ToolCallPayload,
+    ctx: ToolContext
+  ): Promise<ToolExecutionResult> {
+    const args = this.parseArgs(call.arguments, call.name);
 
     switch (call.name) {
-      case "transfer_call":
-        return this.handleTransferCall(args, ctx);
+      case "get_flow_state":
+        return this.handleGetFlowState(ctx);
+      case "update_collected_info":
+        return this.handleUpdateCollectedInfo(args, ctx);
+      case "move_to_node":
+        return this.handleMoveToNode(args, ctx);
+      case "search_faq":
+        return this.handleSearchFaq(args, ctx);
+      case "search_documents":
+        return this.handleSearchDocuments(args, ctx);
       case "send_notification":
         return this.handleSendNotification(args, ctx);
-      case "submit_collected_info":
-        return this.handleSubmitCollected(args, ctx);
-      case "lookup_faq":
-        return this.handleLookupFaq(args, ctx);
-      case "lookup_documents":
-        return this.handleLookupDocuments(args, ctx);
-      case "end_call":
-        return this.handleEndCall(args);
+      case "request_transfer":
+        return this.handleRequestTransfer(args, ctx);
+      case "request_end_call":
+        return this.handleRequestEndCall(args, ctx);
       default:
         this.logger.warn(`Unknown tool call: ${call.name}`);
-        return { output: { ok: false, error: `unknown tool: ${call.name}` } };
+        return this.failure(ctx, `unknown tool: ${call.name}`);
     }
   }
 
   // ────────────────────────────────────────────
+  // tool 実装
+  // ────────────────────────────────────────────
 
-  private handleTransferCall(
+  private handleGetFlowState(ctx: ToolContext): ToolExecutionResult {
+    return {
+      output: {
+        ok: true,
+        snapshot: this.snapshot(ctx),
+      },
+    };
+  }
+
+  private async handleUpdateCollectedInfo(
+    args: Record<string, unknown>,
+    ctx: ToolContext
+  ): Promise<ToolExecutionResult> {
+    const raw = args.slots;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return this.failure(ctx, "slots (object) is required");
+    }
+
+    const slots: Record<string, string> = {};
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (value === null || value === undefined) continue;
+      slots[key] = String(value);
+    }
+
+    const result = this.engine.updateSlots(ctx.callSessionId, slots);
+
+    if (ctx.callSessionId) {
+      await this.persistCollectedSlots(
+        ctx.callSessionId,
+        result.snapshot.collectedSlots,
+        result.snapshot.missingSlots
+      );
+    }
+
+    return {
+      output: {
+        ok: result.missingSlots.length === 0,
+        acceptedSlots: result.acceptedSlots,
+        missingSlots: result.missingSlots,
+        snapshot: result.snapshot,
+      },
+    };
+  }
+
+  private handleMoveToNode(
     args: Record<string, unknown>,
     ctx: ToolContext
   ): ToolExecutionResult {
-    const to = String(args.to ?? ctx.defaults.transferTo ?? "");
-    const reason = args.reason ? String(args.reason) : undefined;
-    if (!to) {
-      return { output: { ok: false, error: "転送先が設定されていません" } };
+    const targetNodeId =
+      typeof args.target_node_id === "string"
+        ? args.target_node_id
+        : typeof args.targetNodeId === "string"
+        ? args.targetNodeId
+        : "";
+    const reason =
+      typeof args.reason === "string" ? args.reason : undefined;
+
+    if (!targetNodeId) {
+      return this.failure(ctx, "target_node_id is required");
     }
-    this.logger.log(`transfer_call to=${to} reason=${reason ?? "-"}`);
+
+    const result = this.engine.moveTo(ctx.callSessionId, targetNodeId, reason);
+
     return {
-      output: { ok: true, to, reason },
-      sideEffect: { kind: "transfer", to, reason },
+      output: {
+        ok: result.ok,
+        message: result.message,
+        snapshot: result.snapshot,
+      },
+    };
+  }
+
+  private async handleSearchFaq(
+    args: Record<string, unknown>,
+    ctx: ToolContext
+  ): Promise<ToolExecutionResult> {
+    const query = typeof args.query === "string" ? args.query.trim() : "";
+    if (!query) return this.failure(ctx, "query is required");
+
+    const session = this.engine.get(ctx.callSessionId);
+    const minScore = session?.compiled.faqMinScore ?? 0.3;
+
+    try {
+      const result = await this.ai.answer({
+        companyId: ctx.companyId,
+        question: query,
+        minScore,
+      });
+      await this.persistFaqUsage(result.data.sources, ctx);
+      return {
+        output: this.buildSearchOutput(result, ctx, "faq"),
+      };
+    } catch (err) {
+      return this.failure(ctx, (err as Error).message);
+    }
+  }
+
+  private async handleSearchDocuments(
+    args: Record<string, unknown>,
+    ctx: ToolContext
+  ): Promise<ToolExecutionResult> {
+    const query = typeof args.query === "string" ? args.query.trim() : "";
+    if (!query) return this.failure(ctx, "query is required");
+
+    const session = this.engine.get(ctx.callSessionId);
+    const minScore = session?.compiled.documentMinScore ?? 0.3;
+
+    try {
+      const result = await this.ai.answer({
+        companyId: ctx.companyId,
+        question: query,
+        minScore,
+      });
+      await this.persistDocumentUsage(result.data.sources, ctx);
+      return {
+        output: this.buildSearchOutput(result, ctx, "document"),
+      };
+    } catch (err) {
+      return this.failure(ctx, (err as Error).message);
+    }
+  }
+
+  /**
+   * 検索結果を脳向けに整形する。
+   * ok を sources の有無で決め、ヒット 0 でも meta (rawHits / topScore / minScore) を
+   * 同梱することで「閾値が厳しすぎて弾かれた (topScore が惜しい)」のか「そもそも
+   * 知識ベースに該当が無い (rawHits=0 or topScore が大きく下回る)」のかを脳が判断できるようにする。
+   */
+  private buildSearchOutput(
+    result: Awaited<ReturnType<AiService["answer"]>>,
+    ctx: ToolContext,
+    kind: "faq" | "document"
+  ): Record<string, unknown> {
+    const sources = result.data.sources;
+    const hasSources = sources.length > 0;
+    const meta = result.data.meta;
+    const label = kind === "faq" ? "FAQ" : "資料";
+    const noHitMessage = (() => {
+      if (meta.rawHits === 0) {
+        return `${label}は登録知識ベースから 1 件も候補が出ませんでした。`;
+      }
+      const topScore = meta.topScore.toFixed(3);
+      return (
+        `${label}の候補 ${meta.rawHits} 件のうち、` +
+        `フローの閾値 ${meta.minScore} 以上を満たすものがありませんでした (最高 ${topScore})。`
+      );
+    })();
+
+    return {
+      ok: hasSources,
+      answer: hasSources ? result.data.answer : noHitMessage,
+      sources,
+      meta,
+      snapshot: this.snapshot(ctx),
     };
   }
 
@@ -116,57 +250,20 @@ export class ToolExecutorService {
     args: Record<string, unknown>,
     ctx: ToolContext
   ): Promise<ToolExecutionResult> {
-    const target = String(args.target ?? ctx.defaults.notifyTarget ?? "");
-    const subject = args.subject ? String(args.subject) : "AI通話: 通知";
-    const body = String(args.body ?? "");
+    const body = typeof args.body === "string" ? args.body : "";
+    if (!body) return this.failure(ctx, "body is required");
 
-    // 実際の送信プロバイダ統合（メール/Slack）は今後実装。現状はログ記録のみ。
+    const session = this.engine.get(ctx.callSessionId);
+    const target =
+      (typeof args.target === "string" && args.target) ||
+      session?.defaults.notifyTarget ||
+      "";
+    const subject =
+      typeof args.subject === "string" ? args.subject : "AI通話: 通知";
+
     this.logger.log(
-      `notification target=${target} subject=${subject} bodyLength=${body.length}`
+      `notification target=${target || "(none)"} subject=${subject} bodyLength=${body.length}`
     );
-
-    // 通話セッションへサマリーとして残しておく（ベストエフォート）
-    if (ctx.callSessionId) {
-      try {
-        await this.prisma.callSummary.upsert({
-          where: { callSessionId: ctx.callSessionId },
-          create: {
-            callSessionId: ctx.callSessionId,
-            summary: `通知送信 → ${target}\n件名: ${subject}\n${body}`,
-          },
-          update: {
-            summary: `通知送信 → ${target}\n件名: ${subject}\n${body}`,
-          },
-        });
-      } catch (err) {
-        this.logger.warn(`Failed to persist notification summary: ${(err as Error).message}`);
-      }
-    }
-
-    return { output: { ok: true, target, subject } };
-  }
-
-  private async handleSubmitCollected(
-    args: Record<string, unknown>,
-    ctx: ToolContext
-  ): Promise<ToolExecutionResult> {
-    const submittedFields = args.fields as Record<string, unknown> | undefined;
-    if (!submittedFields) {
-      return { output: { ok: false, error: "fields is required" } };
-    }
-
-    const previousFields = await this.loadCollectedFields(ctx.callSessionId);
-    const requirement = this.resolveCollectRequirement(
-      { ...previousFields, ...submittedFields },
-      submittedFields,
-      ctx.collectRequirements
-    );
-    const fields = {
-      ...previousFields,
-      ...this.canonicalizeCollectedFields(submittedFields, requirement),
-    };
-    const requiredFields = requirement?.fields ?? [];
-    const missingFields = requiredFields.filter((field) => !this.hasCollectedValue(fields[field]));
 
     if (ctx.callSessionId) {
       try {
@@ -174,185 +271,134 @@ export class ToolExecutorService {
           where: { callSessionId: ctx.callSessionId },
           create: {
             callSessionId: ctx.callSessionId,
-            summary: missingFields.length === 0 ? "情報収集完了" : "情報収集中",
-            extractedData: fields as object,
+            summary: `通知送信 → ${target || "(送信先未設定)"}\n件名: ${subject}\n${body}`,
           },
           update: {
-            summary: missingFields.length === 0 ? "情報収集完了" : "情報収集中",
-            extractedData: fields as object,
+            summary: `通知送信 → ${target || "(送信先未設定)"}\n件名: ${subject}\n${body}`,
           },
         });
       } catch (err) {
-        this.logger.warn(`Failed to persist collected info: ${(err as Error).message}`);
+        this.logger.warn(
+          `Failed to persist notification summary: ${(err as Error).message}`
+        );
       }
     }
 
-    if (missingFields.length > 0) {
-      return {
-        output: {
-          ok: false,
-          fields,
-          requiredFields,
-          missingFields,
-          message: `未確認の項目があります: ${missingFields.join("、")}`,
-        },
-      };
-    }
-
-    return { output: { ok: true, fields, requiredFields, missingFields: [] } };
-  }
-
-  private async loadCollectedFields(callSessionId: string | null) {
-    if (!callSessionId) return {};
-    try {
-      const summary = await this.prisma.callSummary.findUnique({
-        where: { callSessionId },
-        select: { extractedData: true },
-      });
-      const data = summary?.extractedData;
-      if (!data || typeof data !== "object" || Array.isArray(data)) return {};
-      return data as Record<string, unknown>;
-    } catch (err) {
-      this.logger.warn(`Failed to load collected info: ${(err as Error).message}`);
-      return {};
-    }
-  }
-
-  private resolveCollectRequirement(
-    mergedFields: Record<string, unknown>,
-    submittedFields: Record<string, unknown>,
-    requirements: CollectRequirement[]
-  ) {
-    if (requirements.length === 0) return null;
-    if (requirements.length === 1) return requirements[0];
-
-    const submittedNames = Object.keys(submittedFields).map((field) => this.normalizeFieldName(field));
-    const mergedNames = Object.keys(mergedFields).map((field) => this.normalizeFieldName(field));
-
-    return requirements
-      .map((requirement, index) => {
-        const requiredNames = requirement.fields.map((field) => this.normalizeFieldName(field));
-        const submittedOverlap = submittedNames.filter((field) => requiredNames.includes(field)).length;
-        const mergedOverlap = mergedNames.filter((field) => requiredNames.includes(field)).length;
-        return { requirement, index, score: submittedOverlap * 10 + mergedOverlap };
-      })
-      .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.requirement ?? requirements[0];
-  }
-
-  private canonicalizeCollectedFields(
-    submittedFields: Record<string, unknown>,
-    requirement: CollectRequirement | null
-  ) {
-    if (!requirement) return submittedFields;
-
-    const canonicalByNormalized = new Map(
-      requirement.fields.map((field) => [this.normalizeFieldName(field), field])
-    );
-
-    return Object.fromEntries(
-      Object.entries(submittedFields).map(([key, value]) => [
-        canonicalByNormalized.get(this.normalizeFieldName(key)) ?? key,
-        value,
-      ])
-    );
-  }
-
-  private hasCollectedValue(value: unknown) {
-    if (typeof value === "string") return value.trim().length > 0;
-    return value !== null && value !== undefined;
-  }
-
-  private normalizeFieldName(value: string) {
-    return value
-      .replace(/[\s　:：・,，、。]/g, "")
-      .replace(/^[おご御]/, "");
-  }
-
-  private async handleLookupFaq(
-    args: Record<string, unknown>,
-    ctx: ToolContext
-  ): Promise<ToolExecutionResult> {
-    const query = String(args.query ?? "");
-    if (!query) return { output: { ok: false, error: "query is required" } };
-
-    try {
-      // FAQ も Bedrock 検索を共通利用（rag と同じ knowledge base に
-      // FAQ も流し込んでいる前提）。閾値は rag の precision を共有。
-      const result = await this.ai.answer(
-        {
-          companyId: ctx.companyId,
-          question: query,
-          minScore: ctx.faqMinScore,
-        },
-        { maxSources: 2, strictMinScore: true }
-      );
-      await this.persistKnowledgeUsage("faq", result.data.sources, ctx);
-      const hasSources = result.data.sources.length > 0;
-      return {
-        output: {
-          ok: hasSources,
-          answer: hasSources
-            ? result.data.answer
-            : "登録FAQに該当する情報が見つかりませんでした。",
-          sources: result.data.sources,
-        },
-      };
-    } catch (err) {
-      return { output: { ok: false, error: (err as Error).message } };
-    }
-  }
-
-  private async handleLookupDocuments(
-    args: Record<string, unknown>,
-    ctx: ToolContext
-  ): Promise<ToolExecutionResult> {
-    const query = String(args.query ?? "");
-    if (!query) return { output: { ok: false, error: "query is required" } };
-
-    try {
-      const result = await this.ai.answer({
-        companyId: ctx.companyId,
-        question: query,
-        minScore: ctx.documentMinScore,
-      });
-      await this.persistKnowledgeUsage("document", result.data.sources, ctx);
-      return {
-        output: {
-          ok: true,
-          answer: result.data.answer,
-          sources: result.data.sources,
-        },
-      };
-    } catch (err) {
-      return { output: { ok: false, error: (err as Error).message } };
-    }
-  }
-
-  private handleEndCall(args: Record<string, unknown>): ToolExecutionResult {
-    const reason = args.reason ? String(args.reason) : undefined;
     return {
-      output: { ok: true },
+      output: {
+        ok: true,
+        target,
+        subject,
+        snapshot: this.snapshot(ctx),
+      },
+    };
+  }
+
+  private handleRequestTransfer(
+    args: Record<string, unknown>,
+    ctx: ToolContext
+  ): ToolExecutionResult {
+    const session = this.engine.get(ctx.callSessionId);
+    const to =
+      (typeof args.to === "string" && args.to) ||
+      session?.defaults.transferTo ||
+      "";
+    const reason = typeof args.reason === "string" ? args.reason : undefined;
+
+    if (!to) {
+      return this.failure(ctx, "転送先が設定されていません");
+    }
+
+    this.logger.log(`request_transfer to=${to} reason=${reason ?? "-"}`);
+    return {
+      output: {
+        ok: true,
+        to,
+        reason,
+        snapshot: this.snapshot(ctx),
+      },
+      sideEffect: { kind: "transfer", to, reason },
+    };
+  }
+
+  private handleRequestEndCall(
+    args: Record<string, unknown>,
+    ctx: ToolContext
+  ): ToolExecutionResult {
+    const reason = typeof args.reason === "string" ? args.reason : undefined;
+    this.engine.markEnded(ctx.callSessionId);
+    return {
+      output: {
+        ok: true,
+        reason,
+        snapshot: this.snapshot(ctx),
+      },
       sideEffect: { kind: "end_call", reason },
     };
   }
 
-  private async persistKnowledgeUsage(
-    mode: "faq" | "document",
-    rawSources: unknown,
-    ctx: KnowledgeUsageContext
-  ) {
-    if (!ctx.callSessionId || !Array.isArray(rawSources)) return;
-    const sources = rawSources as KnowledgeToolSource[];
+  // ────────────────────────────────────────────
+  // 補助
+  // ────────────────────────────────────────────
 
-    if (mode === "faq") {
-      await this.persistFaqUsage(sources, ctx);
-      return;
-    }
-
-    await this.persistDocumentUsage(sources, ctx);
+  private snapshot(ctx: ToolContext): FlowSnapshot {
+    return this.engine.snapshot(ctx.callSessionId);
   }
 
-  private async persistFaqUsage(sources: KnowledgeToolSource[], ctx: KnowledgeUsageContext) {
+  private failure(ctx: ToolContext, error: string): ToolExecutionResult {
+    return {
+      output: {
+        ok: false,
+        error,
+        snapshot: this.snapshot(ctx),
+      },
+    };
+  }
+
+  private parseArgs(raw: string, name: string): Record<string, unknown> {
+    try {
+      return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    } catch (err) {
+      this.logger.warn(
+        `Failed to parse tool args (${name}): ${(err as Error).message}`
+      );
+      return {};
+    }
+  }
+
+  private async persistCollectedSlots(
+    callSessionId: string,
+    slots: Record<string, string>,
+    missingSlots: string[]
+  ) {
+    try {
+      await this.prisma.callSummary.upsert({
+        where: { callSessionId },
+        create: {
+          callSessionId,
+          summary:
+            missingSlots.length === 0 ? "情報収集完了" : "情報収集中",
+          extractedData: slots as object,
+        },
+        update: {
+          summary:
+            missingSlots.length === 0 ? "情報収集完了" : "情報収集中",
+          extractedData: slots as object,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to persist collected info: ${(err as Error).message}`
+      );
+    }
+  }
+
+  private async persistFaqUsage(
+    rawSources: unknown,
+    ctx: ToolContext
+  ) {
+    if (!ctx.callSessionId || !Array.isArray(rawSources)) return;
+    const sources = rawSources as KnowledgeSourceLite[];
     const faqIds = this.unique(
       sources
         .filter((source) => source.source === "faq" || source.faqId)
@@ -373,11 +419,11 @@ export class ToolExecutorService {
           this.prisma.callSessionFaq.upsert({
             where: {
               callSessionId_faqId: {
-                callSessionId: ctx.callSessionId!,
+                callSessionId: ctx.callSessionId,
                 faqId: faq.id,
               },
             },
-            create: { callSessionId: ctx.callSessionId!, faqId: faq.id },
+            create: { callSessionId: ctx.callSessionId, faqId: faq.id },
             update: {},
           })
         )
@@ -388,16 +434,23 @@ export class ToolExecutorService {
         sources.find((source) => source.category)?.category;
       if (category) {
         await this.prisma.callSession.update({
-          where: { id: ctx.callSessionId! },
+          where: { id: ctx.callSessionId },
           data: { category },
         });
       }
     } catch (err) {
-      this.logger.warn(`Failed to persist FAQ usage: ${(err as Error).message}`);
+      this.logger.warn(
+        `Failed to persist FAQ usage: ${(err as Error).message}`
+      );
     }
   }
 
-  private async persistDocumentUsage(sources: KnowledgeToolSource[], ctx: KnowledgeUsageContext) {
+  private async persistDocumentUsage(
+    rawSources: unknown,
+    ctx: ToolContext
+  ) {
+    if (!ctx.callSessionId || !Array.isArray(rawSources)) return;
+    const sources = rawSources as KnowledgeSourceLite[];
     const documentIds = this.unique(
       sources
         .filter((source) => source.source === "document" || source.documentId)
@@ -417,21 +470,26 @@ export class ToolExecutorService {
           this.prisma.callSessionDocument.upsert({
             where: {
               callSessionId_documentId: {
-                callSessionId: ctx.callSessionId!,
+                callSessionId: ctx.callSessionId,
                 documentId: document.id,
               },
             },
-            create: { callSessionId: ctx.callSessionId!, documentId: document.id },
+            create: {
+              callSessionId: ctx.callSessionId,
+              documentId: document.id,
+            },
             update: {},
           })
         )
       );
     } catch (err) {
-      this.logger.warn(`Failed to persist document usage: ${(err as Error).message}`);
+      this.logger.warn(
+        `Failed to persist document usage: ${(err as Error).message}`
+      );
     }
   }
 
-  private unique(values: string[]) {
+  private unique(values: string[]): string[] {
     return Array.from(new Set(values));
   }
 }

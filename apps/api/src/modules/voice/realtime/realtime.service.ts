@@ -7,7 +7,8 @@ import type { Server as HttpServer, IncomingMessage } from "http";
 import { WebSocketServer } from "ws";
 import WebSocket = require("ws");
 import { PrismaService } from "../../../database/prisma.service";
-import { FlowCompilerService } from "../call-flows/application/flow-compiler.service";
+import { FlowRuntimeCompilerService } from "../call-flows/application/flow-runtime-compiler.service";
+import { FlowEngineService } from "../call-flows/application/flow-engine.service";
 import { ToolExecutorService } from "./tool-executor.service";
 import {
   BridgeObserverEvent,
@@ -38,8 +39,9 @@ export class RealtimeService implements OnApplicationShutdown {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly compiler: FlowCompilerService,
-    private readonly toolExecutor: ToolExecutorService
+    private readonly compiler: FlowRuntimeCompilerService,
+    private readonly toolExecutor: ToolExecutorService,
+    private readonly flowEngine: FlowEngineService
   ) {}
 
   /**
@@ -168,12 +170,11 @@ export class RealtimeService implements OnApplicationShutdown {
         callSessionId,
         transferTo,
         notifyTarget,
-        faqMinScore: compiled.faqMinScore,
-        documentMinScore: compiled.documentMinScore,
       },
       {
         openAiApiKey: apiKey,
         toolExecutor: this.toolExecutor,
+        flowEngine: this.flowEngine,
         saveTranscript: (data) => this.persistTranscript(data),
         markSessionEnded: (data) => this.markSessionEnded(data),
       }
@@ -255,6 +256,12 @@ export class RealtimeService implements OnApplicationShutdown {
       );
     }
 
+    // 同 companyId に対する古い dev bridge が「停止」されずに残っているケース
+    // (ブラウザがタブを閉じた / WS を close せず再度開始ボタンを押した 等) の保険。
+    // 新しい通話を「まっさら」で開始するため、古い dev bridge を強制 shutdown する。
+    // production の本番電話 (handleConnection) は複数並列着信があり得るので対象外。
+    this.reapStaleDevBridges(companyId);
+
     const session = await this.prisma.callSession.create({
       data: {
         companyId,
@@ -279,12 +286,12 @@ export class RealtimeService implements OnApplicationShutdown {
         callSessionId: session.id,
         callerNumber: start.callerNumber ?? "dev-browser",
         transferTo,
-        faqMinScore: compiled.faqMinScore,
-        documentMinScore: compiled.documentMinScore,
+        isDev: true,
       },
       {
         openAiApiKey: apiKey,
         toolExecutor: this.toolExecutor,
+        flowEngine: this.flowEngine,
         onEvent: (event) => this.sendDevBridgeEvent(ws, event),
         saveTranscript: (data) => this.persistTranscript(data),
         markSessionEnded: (data) => this.markSessionEnded(data),
@@ -402,6 +409,29 @@ export class RealtimeService implements OnApplicationShutdown {
 
   private sendDevBridgeEvent(ws: WebSocket, event: BridgeObserverEvent) {
     this.sendDevJson(ws, event);
+  }
+
+  /** 同 companyId の生きている dev bridge を全部 shutdown して Set からも抜く。 */
+  private reapStaleDevBridges(companyId: string) {
+    const stale: RealtimeBridge[] = [];
+    for (const bridge of this.bridges) {
+      if (bridge.isDevBridge && bridge.companyId === companyId) {
+        stale.push(bridge);
+      }
+    }
+    for (const bridge of stale) {
+      this.logger.log(
+        `Dev call: shutting down stale bridge companyId=${companyId} (new call superseding)`
+      );
+      try {
+        bridge.shutdown("superseded_by_new_dev_call");
+      } catch (err) {
+        this.logger.warn(
+          `Failed to shutdown stale dev bridge: ${(err as Error).message}`
+        );
+      }
+      this.bridges.delete(bridge);
+    }
   }
 
   private sendDevJson(ws: WebSocket, payload: Record<string, unknown>) {

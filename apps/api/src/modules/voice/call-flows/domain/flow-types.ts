@@ -82,8 +82,11 @@ export interface FlowGraph {
 }
 
 export const BASIC_INFO_MAX_LENGTH = 30;
-export const FAQ_MIN_SCORE_DEFAULT = 0.7;
-export const DOCUMENT_MIN_SCORE_DEFAULT = 0.7;
+// Bedrock Knowledge Base の vector similarity score は cosine ベースで、
+// 実用的な「関連性あり」は概ね 0.3〜0.5。0.7 以上はほぼ同一文レベルで現実的にヒットしない。
+// UI スライダー precision (0..1) はコンパイラ側で 0.1..0.5 にマップしてからこの帯に合わせる。
+export const FAQ_MIN_SCORE_DEFAULT = 0.3;
+export const DOCUMENT_MIN_SCORE_DEFAULT = 0.3;
 
 // フロー JSON が想定どおりの形か簡易検証
 export function isFlowGraph(value: unknown): value is FlowGraph {

@@ -183,12 +183,25 @@ export class OpenAIRealtimeClient {
           input: {
             format: this.toGaAudioFormat(config.inputAudioFormat ?? "g711_ulaw"),
             transcription: { model: "gpt-4o-mini-transcribe" },
-            // server VAD: モデル側で発話区間検出と割り込みを行う
+            // server VAD: モデル側で発話区間検出と割り込みを行う。
+            //   create_response: false → 発話完了で勝手に応答を作らない。bridge が
+            //     userTranscript 受領後に snapshot リマインダを注入してから明示的に
+            //     createResponse() する。これで「ユーザーが息継ぎした瞬間に AI が被せる」
+            //     のような誤発火が消える。
+            //   interrupt_response: true → AI 応答中にユーザーが喋り始めたら server 側で
+            //     即 cancel を打つ。bridge の cancelResponse と二重で保険になる。
             turn_detection: {
               type: config.turnDetection?.type ?? "server_vad",
-              threshold: config.turnDetection?.threshold ?? 0.5,
-              prefix_padding_ms: config.turnDetection?.prefixPaddingMs ?? 300,
-              silence_duration_ms: config.turnDetection?.silenceDurationMs ?? 500,
+              threshold:
+                config.turnDetection?.threshold ?? this.envNumber("REALTIME_VAD_THRESHOLD", 0.5),
+              prefix_padding_ms:
+                config.turnDetection?.prefixPaddingMs ??
+                this.envNumber("REALTIME_VAD_PREFIX_PADDING_MS", 300),
+              silence_duration_ms:
+                config.turnDetection?.silenceDurationMs ??
+                this.envNumber("REALTIME_VAD_SILENCE_MS", 700),
+              create_response: false,
+              interrupt_response: true,
             },
           },
           output: {
@@ -226,17 +239,41 @@ export class OpenAIRealtimeClient {
     });
   }
 
-  /** 開幕の固定発話を assistant メッセージとして注入し、即座に発話させる */
-  injectAssistantUtterance(text: string) {
+  /**
+   * 「次の発話はこの文を一字一句」と強制する。
+   * response.create の instructions オーバーライドで一回限りの指示を入れるので、
+   * session.instructions を汚さずに開幕の locked message を確実に発話させられる。
+   * 旧実装 (assistant role の output_text を履歴に注入してから response.create)
+   * では「過去ターンとして見て次は何を喋ろう」と AI が判断してしまい、locked text
+   * を一字一句出す保証が無かった。
+   */
+  sayExact(text: string) {
+    this.send({
+      type: "response.create",
+      response: {
+        output_modalities: ["audio"],
+        instructions: `次の文を一字一句、追加・改変なく日本語で発話してください。他のことは喋らないでください:\n「${text}」`,
+      },
+    });
+  }
+
+  /**
+   * 会話履歴に system role の note を差し込む。response.create はしないので、
+   * 「今からの判断材料を脳に渡す」用途 (フロー snapshot の注入など) に使う。
+   */
+  injectSystemNote(text: string) {
     this.send({
       type: "conversation.item.create",
       item: {
         type: "message",
-        role: "assistant",
-        content: [{ type: "output_text", text }],
+        role: "system",
+        content: [{ type: "input_text", text }],
       },
     });
-    // 注入したメッセージを音声化して再生
+  }
+
+  /** 任意のタイミングで AI 応答を起動する (response.create) */
+  createResponse() {
     this.send({
       type: "response.create",
       response: { output_modalities: ["audio"] },
@@ -418,6 +455,13 @@ export class OpenAIRealtimeClient {
   private toGaAudioFormat(format: RealtimeAudioFormat) {
     if (format === "pcm16") return { type: "audio/pcm", rate: 24000 };
     return { type: "audio/pcmu" };
+  }
+
+  private envNumber(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (raw === undefined) return fallback;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : fallback;
   }
 
   private emitFunctionCallsFromResponse(event: OpenAIRealtimeEvent) {
