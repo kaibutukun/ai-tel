@@ -182,7 +182,21 @@ export class OpenAIRealtimeClient {
         audio: {
           input: {
             format: this.toGaAudioFormat(config.inputAudioFormat ?? "g711_ulaw"),
-            transcription: { model: "gpt-4o-mini-transcribe" },
+            // 言語ヒントを必ず渡す。無指定だと最初の数フレームで自動検出するため、
+            // 短い相槌・咳払い・環境音だけのターンで誤って韓国語/英語と判定され、
+            // ユーザーが日本語で喋っているのに transcript が "어." 等になる事故が起こる。
+            //
+            // 注意:
+            //   - `prompt` フィールドは渡さない。Realtime API の `audio.input.transcription`
+            //     では prompt の扱いが安定しておらず、無音/雑音ターンで prompt 文字列が
+            //     そのまま transcript として返ってきて会話ログを汚す事故が観測済み。
+            //   - モデルは `gpt-4o-transcribe` をデフォルト。mini 版は速いが短文・電話帯域
+            //     音声で日本語精度がかなり弱いので、こちらに振っておく。env で戻せる。
+            transcription: {
+              model:
+                process.env.REALTIME_TRANSCRIBE_MODEL || "gpt-4o-transcribe",
+              language: process.env.REALTIME_TRANSCRIBE_LANGUAGE || "ja",
+            },
             // server VAD: モデル側で発話区間検出と割り込みを行う。
             //   create_response: false → 発話完了で勝手に応答を作らない。bridge が
             //     userTranscript 受領後に snapshot リマインダを注入してから明示的に

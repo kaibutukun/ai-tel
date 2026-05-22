@@ -202,6 +202,16 @@ export class FlowEngineService {
     session.status = "ended";
   }
 
+  /**
+   * ユーザー発話が確定するたびに最新 transcript を記録する。end_call ガード等で
+   * 「直近のユーザー発話が同意を含むか」を判定する材料として使う。
+   */
+  recordUserTranscript(callSessionId: string, transcript: string) {
+    const session = this.sessions.get(callSessionId);
+    if (!session) return;
+    session.lastUserTranscript = transcript;
+  }
+
   // ────────────────────────────────────────────
   // 内部
   // ────────────────────────────────────────────

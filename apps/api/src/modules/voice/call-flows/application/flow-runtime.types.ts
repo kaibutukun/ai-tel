@@ -75,6 +75,11 @@ export interface FlowSession {
   collectedSlots: Record<string, string>;
   visitedNodeIds: string[];
   status: "active" | "ended";
+  /**
+   * 最後にユーザーが発した transcript。end ノードで request_end_call が
+   * 呼ばれた時に「ユーザーが本当に同意してるか」を検証するガードに使う。
+   */
+  lastUserTranscript?: string;
 }
 
 /** Realtime に毎回返す状態スナップショット */

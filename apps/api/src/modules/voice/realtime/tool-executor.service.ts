@@ -326,6 +326,35 @@ export class ToolExecutorService {
     ctx: ToolContext
   ): ToolExecutionResult {
     const reason = typeof args.reason === "string" ? args.reason : undefined;
+
+    // 同意ガード: end ノード上で end_call を呼ぼうとしている時、直前のユーザー発話が
+    // 「終了同意」とみなせる内容かを検証する。end ノードの guidance には毎回
+    // 「他にご質問はございますか？で同意を取ってから request_end_call を呼べ」と
+    // 書いてあるが、脳が「です。」のような短い・関係ない応答に対しても end_call を
+    // 強行することが観測されたため、ここで実際の同意有無をサーバ側で押さえる。
+    const session = this.engine.get(ctx.callSessionId);
+    const current = session?.currentNodeId
+      ? session.compiled.nodes[session.currentNodeId] ?? null
+      : null;
+    if (current?.type === "end") {
+      const lastUser = session?.lastUserTranscript ?? "";
+      if (!this.looksLikeEndAgreement(lastUser)) {
+        this.logger.warn(
+          `request_end_call rejected: 直前ユーザー発話「${lastUser}」が同意として認識されず`
+        );
+        return {
+          output: {
+            ok: false,
+            error:
+              "通話終了の前に、ユーザーが「特にない / 大丈夫 / ありがとう」等で明示的に同意したかを確認してください。" +
+              `直前のユーザー発話「${lastUser || "(空)"}」は終了同意とは判断できませんでした。` +
+              "もう一度「他にご質問はございますか？」と聞き直し、ユーザーがはっきり同意してから request_end_call を呼んでください。",
+            snapshot: this.snapshot(ctx),
+          },
+        };
+      }
+    }
+
     this.engine.markEnded(ctx.callSessionId);
     return {
       output: {
@@ -335,6 +364,49 @@ export class ToolExecutorService {
       },
       sideEffect: { kind: "end_call", reason },
     };
+  }
+
+  /**
+   * 直近ユーザー発話が「通話終了に同意した」と判断できるかをラフに判定する。
+   * - 完全一致ではなく部分一致で許す (「いえ、特にないですね」「もう大丈夫です」等)。
+   * - 短すぎる発話 (「です」「あ」「うん」単独等) は同意と認めない。
+   *   → 「うん」は会話の相槌でも頻出し、終了の意思とは取れないため弾く。
+   * - 否定的な「すみませんもう少し聞きたい」等は同意キーワードを含まないので
+   *   自然に弾かれる。
+   */
+  private looksLikeEndAgreement(transcript: string): boolean {
+    if (!transcript) return false;
+    const normalized = transcript
+      .toLowerCase()
+      .replace(/[\s。、!?！？.,]/g, "");
+    if (normalized.length < 2) return false;
+
+    const agreementMarkers = [
+      "ない",
+      "ありませ",
+      "なしで",
+      "なしです",
+      "ありがと",
+      "大丈夫",
+      "結構",
+      "けっこう",
+      "いえ",
+      "いいえ",
+      "ok",
+      "もう大丈",
+      "もういい",
+      "もうない",
+      "もう結構",
+      "それで",
+      "それだけ",
+      "終わり",
+      "おしまい",
+      "失礼します",
+      "切って",
+    ];
+    return agreementMarkers.some((marker) =>
+      normalized.includes(marker.toLowerCase())
+    );
   }
 
   // ────────────────────────────────────────────

@@ -113,10 +113,23 @@ export class RealtimeBridge {
     const n = raw === undefined ? 1500 : Number(raw);
     return Number.isFinite(n) && n >= 0 ? n : 1500;
   })();
+  /**
+   * AI が直近この時間内に音声を出していたら local barge-in 検知を黙らせる。
+   * 値を 0 にすると無効化。デフォルトは 500ms。
+   * AI 自身のエコー (ブラウザ AEC をすり抜けた残響など) で誤って barge-in が発火し、
+   * 応答が真ん中で切られて「お客様、恐れ入りますが…」みたいに尻切れになる事故防止。
+   * OpenAI server_vad は別経路で生きているので、本当にユーザーが被せて喋ってきた
+   * ケースは依然キャンセルできる。
+   */
+  private readonly bargeInAiSpeakingGuardMs = (() => {
+    const raw = process.env.REALTIME_BARGE_IN_AI_SPEAKING_GUARD_MS;
+    const n = raw === undefined ? 500 : Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 500;
+  })();
   private readonly echoGuardMs = (() => {
     const raw = process.env.REALTIME_ECHO_GUARD_MS;
-    const n = raw === undefined ? 0 : Number(raw);
-    return Number.isFinite(n) && n >= 0 ? n : 0;
+    const n = raw === undefined ? 200 : Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 200;
   })();
   private echoGuardDropCount = 0;
   private userBargeInUntil = 0;
@@ -137,6 +150,22 @@ export class RealtimeBridge {
   private pendingEndCallSafetyTimer: NodeJS.Timeout | null = null;
   private pendingEndCallFinalizeTimer: NodeJS.Timeout | null = null;
   private suppressedAudioDeltas = 0;
+  /**
+   * userTranscript 受領時にまだ前ターンの response が active (cancel 送信直後で
+   * response.done が来てない等) だった場合、ここに true を立てて responseDone で
+   * createResponse を後追いする。これをやらないと OpenAI に
+   * conversation_already_has_active_response エラーで弾かれて発話が止まる。
+   */
+  private pendingResponseTurn = false;
+  /**
+   * 現在 active な response 中に CPaaS (= 受話側) へ送出した音声バイト数。
+   * OpenAI からの audio_delta はほぼ生成完了とともに一気に届くが、受話側 (NTT CPaaS or
+   * dev browser) は実時間ペースで再生するため、response.done = 再生完了 ではない。
+   * end_call 時にこのバイト数 / (24kHz×16bit = 48 B/ms) で再生残時間を計算し、
+   * 「お電話ありがとうございました。」が最後まで鳴り終わるのを待ってから shutdown する。
+   */
+  private currentResponseAudioBytes = 0;
+  private currentResponseStartedAt = 0;
 
   constructor(
     private readonly cpaasWs: WebSocket,
@@ -302,11 +331,21 @@ export class RealtimeBridge {
     this.inputAudioBytes += audio.length;
 
     const client = this.openai;
-    // grace 期間中は local barge-in を発火させない (AI 第一声が消える事故防止)。
+    // grace 期間中 / AI が直近に喋っていた間は local barge-in を発火させない。
+    //   - grace: AI 第一声が response.created 直後のラグで消える事故防止
+    //   - AI speaking guard: AI 自身のエコーを「ユーザーが被せた」と誤検知して
+    //     応答を真ん中で切る事故防止 (例: 「お客様、恐れ入りますが…」で尻切れ)
     // OpenAI の server_vad による speech_started は別経路で来るので、ここを抑えても
     // 本当にユーザーが喋り始めた時は cancel される。
+    const now = Date.now();
+    const aiSpeakingRecently =
+      this.bargeInAiSpeakingGuardMs > 0 &&
+      this.lastAssistantAudioAt > 0 &&
+      now - this.lastAssistantAudioAt < this.bargeInAiSpeakingGuardMs;
     const bargeInArmed =
-      !!client?.isResponseActive() && Date.now() >= this.bargeInActiveAfter;
+      !!client?.isResponseActive() &&
+      now >= this.bargeInActiveAfter &&
+      !aiSpeakingRecently;
     if (
       client &&
       this.bargeInDetector.shouldInterrupt(audio, bargeInArmed)
@@ -339,6 +378,9 @@ export class RealtimeBridge {
       }
       this.lastAssistantAudioAt = Date.now();
       this.sendCpaasAudio(audio);
+      // end_call の音声排出待ち計算用に、受話側へ流した量を累計する。
+      // 抑制された delta はカウントしない (実際には送ってないので)。
+      this.currentResponseAudioBytes += Buffer.byteLength(audio, "base64");
     });
 
     client.on("textDelta", (text) => {
@@ -349,6 +391,9 @@ export class RealtimeBridge {
     client.on("responseCreated", () => {
       this.assistantTextBuffer = "";
       this.bargeInActiveAfter = Date.now() + this.bargeInGraceMs;
+      // 音声排出待ち計算用の累計をリセット
+      this.currentResponseAudioBytes = 0;
+      this.currentResponseStartedAt = Date.now();
       this.logger.log(`${this.tag} ▷ response.created (AI 応答生成開始)`);
     });
 
@@ -388,6 +433,16 @@ export class RealtimeBridge {
       // cancelled (ユーザー割り込み) は最終発話ではないので無視して次の completed を待つ。
       if (this.pendingEndCallReason && status === "completed") {
         this.finalizePendingEndCall();
+        return;
+      }
+      // 直前の userTranscript で active な前ターンに被って弾かれていたケースの後追い。
+      // この時点で responseActive は false に戻っているので、安全に createResponse できる。
+      if (this.pendingResponseTurn && !this.closed) {
+        this.pendingResponseTurn = false;
+        this.logger.debug(
+          `${this.tag} pending response turn → createResponse (前ターン解消後)`
+        );
+        this.startResponseTurn(client);
       }
     });
 
@@ -395,11 +450,18 @@ export class RealtimeBridge {
       this.logger.log(`${this.tag} 👤 USER: ${transcript}`);
       this.emitObserverEvent({ type: "user_transcript", text: transcript });
       void this.persistTranscript("USER", transcript);
+      // FlowEngine 側にも直近 transcript を渡す。end_call の同意ガード等が
+      // 「直前のユーザー発話」を読み取れるようにするため。
+      if (this.context.callSessionId) {
+        this.deps.flowEngine.recordUserTranscript(
+          this.context.callSessionId,
+          transcript
+        );
+      }
       // create_response: false 設定なので、ユーザー発話が確定したら能動的に
       // 応答を起動する。直前に「現在の snapshot 要点」を system note で再注入し、
       // 脳が常に最新のフロー状態を見て喋るようにする (会話のかみ合わせ対策)。
-      this.injectSnapshotReminder(client);
-      client.createResponse();
+      this.startResponseTurn(client);
     });
 
     client.on("speechStarted", () => {
@@ -603,13 +665,35 @@ export class RealtimeBridge {
 
   /**
    * 最終発話の response.done を受けてから shutdown するまでの猶予。
-   * CpaasAudioFramer が最後のフレームを送出し、CPaaS / ブラウザ側の再生バッファが
-   * 鳴り終わるための時間を取る。
+   * 旧実装は固定 1200ms 待ちだったが、CpaasAudioFramer はバッファをほぼ即時に
+   * 受話側へ flush する一方、受話側は実時間ペースで再生するので、長文の最終発話
+   * (「お電話ありがとうございました。失礼いたします。」等) では再生途中で WS が
+   * 閉じられて尻切れになる事故が起きていた。
+   * このターンで実際に送出した音声バイト数から再生に必要な総時間を算出し、
+   * 既に経過した時間との差 (= バックログ) + 余韻 を待ってから shutdown する。
+   *   pcm16 / 24kHz / mono = 48 B/ms なので audioDurationMs = bytes / 48。
    */
   private finalizePendingEndCall() {
     if (!this.pendingEndCallReason || this.pendingEndCallFinalizeTimer) return;
     const reason = this.pendingEndCallReason;
-    const tailMs = 1200;
+
+    const audioDurationMs = this.currentResponseAudioBytes / 48;
+    const elapsedMs =
+      this.currentResponseStartedAt > 0
+        ? Date.now() - this.currentResponseStartedAt
+        : audioDurationMs;
+    const backlogMs = Math.max(0, audioDurationMs - elapsedMs);
+    const safetyTailMs = 700;
+    // 暴走防止のハードキャップ。ここまで待っても shutdown しないということは無い。
+    const HARD_CAP_MS = 15000;
+    const totalWait = Math.min(backlogMs + safetyTailMs, HARD_CAP_MS);
+
+    this.logger.log(
+      `${this.tag} end_call: drain wait=${totalWait}ms ` +
+        `(audioDur=${Math.round(audioDurationMs)}ms elapsed=${elapsedMs}ms ` +
+        `backlog=${Math.round(backlogMs)}ms tail=${safetyTailMs}ms)`
+    );
+
     this.pendingEndCallFinalizeTimer = setTimeout(() => {
       this.pendingEndCallFinalizeTimer = null;
       this.pendingEndCallReason = null;
@@ -618,7 +702,7 @@ export class RealtimeBridge {
         this.pendingEndCallSafetyTimer = null;
       }
       this.shutdown(reason);
-    }, tailMs);
+    }, totalWait);
   }
 
   /**
@@ -652,6 +736,25 @@ export class RealtimeBridge {
     this.logger.debug(
       `${this.tag} userSpeaking=${speaking} via ${source}`
     );
+  }
+
+  /**
+   * 「ユーザー発話 → AI 応答ターン」を 1 件起動する。
+   * 直前ターンが片付いていない (cancel 送信直後で response.done 未着 等) 場合は
+   * createResponse を打つと OpenAI に conversation_already_has_active_response で
+   * 弾かれるので、フラグを立てて responseDone 時に後追い実行する。
+   */
+  private startResponseTurn(client: OpenAIRealtimeClient) {
+    if (this.closed) return;
+    if (client.isResponseActive()) {
+      this.pendingResponseTurn = true;
+      this.logger.debug(
+        `${this.tag} startResponseTurn: response 進行中のため後追いに回す`
+      );
+      return;
+    }
+    this.injectSnapshotReminder(client);
+    client.createResponse();
   }
 
   /**
