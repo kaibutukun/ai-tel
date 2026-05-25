@@ -13,7 +13,6 @@ import {
   Bell,
   Users,
   Settings,
-  Shield,
   Building2,
   LogOut,
 } from "lucide-react";
@@ -35,15 +34,13 @@ const navItems = [
 ];
 
 const adminItems = [
-  { href: "/admin", label: "管理者画面", icon: Shield },
   { href: "/admin/companies", label: "企業管理", icon: Building2 },
   { href: "/admin/phone-numbers", label: "電話番号管理", icon: Phone },
+  { href: "/admin/call-logs", label: "通話履歴", icon: PhoneCall },
 ];
 
 function isActivePath(pathname: string, href: string) {
-  return href === "/admin"
-    ? pathname === href
-    : pathname === href || pathname.startsWith(href + "/");
+  return pathname === href || pathname.startsWith(href + "/");
 }
 
 export function Sidebar() {

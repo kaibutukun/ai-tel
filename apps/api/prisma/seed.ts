@@ -29,24 +29,18 @@ async function main() {
   console.log("🌱 Seeding database...");
 
   // ── プラン ────────────────────────────────────────────────────────────
-  const plan = await prisma.plan.upsert({
-    where: { type: "BUSINESS" },
-    create: {
-      name: "Business",
-      type: "BUSINESS",
-      priceMonthly: 29800,
-      maxPhoneNumbers: 5,
-      maxMinutesPerMonth: 500,
-      maxFaqs: 100,
-      hasMultipleFlows: true,
-      hasSlackNotification: true,
-      hasMemberManagement: true,
-      hasTransfer: true,
-      hasAdvancedConditions: true,
-    },
-    update: {},
+  // プランは TRIAL / PAID の2種類。料金や上限は会社ごとに Subscription 側で設定する
+  await prisma.plan.upsert({
+    where: { type: "TRIAL" },
+    create: { name: "無料体験", type: "TRIAL" },
+    update: { name: "無料体験" },
   });
-  console.log(`✅ Plan: ${plan.name}`);
+  const plan = await prisma.plan.upsert({
+    where: { type: "PAID" },
+    create: { name: "有料会員", type: "PAID" },
+    update: { name: "有料会員" },
+  });
+  console.log(`✅ Plans: 無料体験 + ${plan.name}`);
 
   // ── 会社 ──────────────────────────────────────────────────────────────
   const company = await prisma.company.upsert({
@@ -115,10 +109,18 @@ async function main() {
       status: "ACTIVE",
       currentPeriodStart: periodStart,
       currentPeriodEnd: periodEnd,
+      monthlyPrice: 29800,
+      maxMinutesPerMonth: 500,
+      trialEndsAt: null,
     },
-    update: {},
+    update: {
+      planId: plan.id,
+      monthlyPrice: 29800,
+      maxMinutesPerMonth: 500,
+      trialEndsAt: null,
+    },
   });
-  console.log(`✅ Subscription: ${plan.name}`);
+  console.log(`✅ Subscription: ${plan.name} (¥29800 / 500分)`);
 
   // ── コールフロー ──────────────────────────────────────────────────────
   const callFlow = await prisma.callFlow.upsert({

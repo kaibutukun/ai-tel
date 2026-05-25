@@ -1,5 +1,7 @@
 import { apiClient } from "@/shared/api/http-client";
 
+export type AdminPlanType = "TRIAL" | "PAID";
+
 export interface AdminCompany {
   id: string;
   name: string;
@@ -7,8 +9,10 @@ export interface AdminCompany {
   isActive: boolean;
   createdAt: string;
   plan: string;
-  planType: string | null;
-  priceMonthly: number;
+  planType: AdminPlanType | null;
+  monthlyPrice: number;
+  maxMinutesPerMonth: number;
+  trialEndsAt: string | null;
   callsThisMonth: number;
   minutesThisMonth: number;
   phoneNumbersCount: number;
@@ -47,6 +51,35 @@ export interface AdminPhoneNumberRequest {
   company: { id: string; name: string };
 }
 
+export interface AdminCompanyPlanUpdate {
+  planType: AdminPlanType;
+  monthlyPrice: number;
+  maxMinutesPerMonth: number;
+  /** TRIAL のときに ISO 文字列。PAID なら null */
+  trialEndsAt: string | null;
+}
+
+export interface AdminCallSession {
+  id: string;
+  companyId: string;
+  callerNumber: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  durationSeconds: number | null;
+  result: "AI_RESOLVED" | "TRANSFERRED" | "CALLBACK_REQUESTED" | "NO_ANSWER" | "VOICEMAIL";
+  company: { id: string; name: string } | null;
+  callFlow: { name: string } | null;
+  phoneNumber: { number: string; displayName: string | null } | null;
+}
+
+export interface AdminCallSessionDetail extends AdminCallSession {
+  recordingUrl: string | null;
+  operatorNote: string | null;
+  transcripts: { speaker: string; content: string; timestamp: number }[];
+  summaries: { summary: string; extractedData: unknown; sentiment: string | null }[];
+  sessionFaqs: { faq: { question: string } }[];
+}
+
 interface ListResponse {
   data: AdminCompany[];
   meta: { total: number };
@@ -58,6 +91,19 @@ interface PhoneNumberListResponse { data: AdminPhoneNumber[]; meta: { total: num
 interface PhoneNumberResponse { data: AdminPhoneNumber }
 interface PhoneNumberRequestListResponse { data: AdminPhoneNumberRequest[]; meta: { total: number } }
 interface PhoneNumberRequestResponse { data: AdminPhoneNumberRequest }
+interface CallSessionListResponse {
+  data: AdminCallSession[];
+  meta: { total: number; page: number; limit: number };
+}
+interface CallSessionDetailResponse { data: AdminCallSessionDetail }
+
+export interface AdminCallSessionsListParams {
+  page?: number;
+  limit?: number;
+  companyId?: string;
+  from?: string;
+  to?: string;
+}
 
 export const adminApi = {
   listCompanies: () =>
@@ -68,6 +114,10 @@ export const adminApi = {
 
   updateCompany: (id: string, data: { isActive?: boolean; adminNotes?: string }) =>
     apiClient.patch<SingleResponse>(`/admin/companies/${id}`, data),
+
+  /** 企業ごとのプラン設定（種別・料金・上限・トライアル期限）を上書き */
+  updateCompanyPlan: (id: string, data: AdminCompanyPlanUpdate) =>
+    apiClient.put<SingleResponse>(`/admin/companies/${id}/plan`, data),
 
   listPhoneNumbers: () =>
     apiClient.get<PhoneNumberListResponse>("/admin/phone-numbers"),
@@ -89,4 +139,20 @@ export const adminApi = {
     id: string,
     data: { status?: AdminPhoneNumberRequest["status"]; adminNote?: string }
   ) => apiClient.patch<PhoneNumberRequestResponse>(`/admin/phone-number-requests/${id}`, data),
+
+  // ── 通話履歴 横断ビュー ───────────────────────────────────────
+  listCallSessions: (params: AdminCallSessionsListParams = {}) => {
+    const query = new URLSearchParams();
+    query.set("page", String(params.page ?? 1));
+    query.set("limit", String(params.limit ?? 30));
+    if (params.companyId) query.set("companyId", params.companyId);
+    if (params.from) query.set("from", params.from);
+    if (params.to) query.set("to", params.to);
+    return apiClient.get<CallSessionListResponse>(
+      `/admin/call-sessions?${query.toString()}`
+    );
+  },
+
+  getCallSession: (id: string) =>
+    apiClient.get<CallSessionDetailResponse>(`/admin/call-sessions/${id}`),
 };

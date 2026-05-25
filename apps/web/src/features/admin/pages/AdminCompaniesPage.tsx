@@ -11,7 +11,13 @@ import { Switch } from "@/shared/ui/switch";
 import { adminApi, type AdminCompany, type AdminStats } from "@/features/admin/api/admin-api";
 
 const planVariants: Record<string, "default" | "secondary" | "outline" | "info" | "success"> = {
-  Trial: "secondary", Starter: "outline", Business: "info", Pro: "default", Enterprise: "success",
+  TRIAL: "secondary",
+  PAID: "success",
+};
+
+const planLabels: Record<string, string> = {
+  TRIAL: "無料体験",
+  PAID: "有料会員",
 };
 
 const billingVariants: Record<string, "success" | "destructive" | "warning" | "secondary"> = {
@@ -22,7 +28,7 @@ const billingLabels: Record<string, string> = {
   PAID: "支払済", OPEN: "未払い", PAST_DUE: "期限超過", VOID: "無効", NONE: "なし",
 };
 
-export function AdminPage() {
+export function AdminCompaniesPage() {
   const [companies, setCompanies] = useState<AdminCompany[]>([]);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,7 +61,7 @@ export function AdminPage() {
 
   return (
     <>
-      <Header title="管理者ダッシュボード" />
+      <Header title="企業管理" />
       <main className="flex-1 p-6 space-y-6">
         {loading && <p className="text-sm text-gray-400">読み込み中...</p>}
 
@@ -90,45 +96,51 @@ export function AdminPage() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {["企業名", "プラン", "月額", "今月通話数", "通話時間", "電話番号数", "請求", "有効", ""].map((h) => (
+                  {["企業名", "プラン", "月額", "通話分上限", "今月通話", "請求", "有効", ""].map((h) => (
                     <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {companies.length === 0 && !loading && (
-                  <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">企業がありません</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">企業がありません</td></tr>
                 )}
-                {companies.map((company) => (
-                  <tr key={company.id} className={`hover:bg-gray-50 ${!company.isActive ? "opacity-50" : ""}`}>
-                    <td className="px-4 py-4">
-                      <p className="text-sm font-medium text-gray-900">{company.name}</p>
-                      <p className="text-xs text-gray-400">{company.createdAt}〜</p>
-                    </td>
-                    <td className="px-4 py-4">
-                      <Badge variant={planVariants[company.plan] ?? "secondary"}>{company.plan}</Badge>
-                    </td>
-                    <td className="px-4 py-4 text-sm text-gray-700">
-                      {company.priceMonthly > 0 ? `¥${company.priceMonthly.toLocaleString()}` : "無料"}
-                    </td>
-                    <td className="px-4 py-4 text-sm text-gray-700">{company.callsThisMonth}件</td>
-                    <td className="px-4 py-4 text-sm text-gray-700">{company.minutesThisMonth}分</td>
-                    <td className="px-4 py-4 text-sm text-gray-700">{company.phoneNumbersCount}番号</td>
-                    <td className="px-4 py-4">
-                      <Badge variant={billingVariants[company.billingStatus] ?? "secondary"}>
-                        {billingLabels[company.billingStatus] ?? company.billingStatus}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-4">
-                      <Switch checked={company.isActive} onCheckedChange={() => toggleActive(company.id, company.isActive)} />
-                    </td>
-                    <td className="px-4 py-4">
-                      <Link href={`/admin/companies/${company.id}`}>
-                        <Button variant="outline" size="sm">詳細</Button>
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
+                {companies.map((company) => {
+                  const planKey = company.planType ?? "";
+                  return (
+                    <tr key={company.id} className={`hover:bg-gray-50 ${!company.isActive ? "opacity-50" : ""}`}>
+                      <td className="px-4 py-4">
+                        <p className="text-sm font-medium text-gray-900">{company.name}</p>
+                        <p className="text-xs text-gray-400">{company.createdAt}〜</p>
+                      </td>
+                      <td className="px-4 py-4">
+                        <Badge variant={planVariants[planKey] ?? "secondary"}>
+                          {planLabels[planKey] ?? company.plan}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-4 text-sm text-gray-700">
+                        {company.monthlyPrice > 0 ? `¥${company.monthlyPrice.toLocaleString()}` : "無料"}
+                      </td>
+                      <td className="px-4 py-4 text-sm text-gray-700">{company.maxMinutesPerMonth}分</td>
+                      <td className="px-4 py-4 text-sm text-gray-700">
+                        {company.callsThisMonth}件 / {company.minutesThisMonth}分
+                      </td>
+                      <td className="px-4 py-4">
+                        <Badge variant={billingVariants[company.billingStatus] ?? "secondary"}>
+                          {billingLabels[company.billingStatus] ?? company.billingStatus}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-4">
+                        <Switch checked={company.isActive} onCheckedChange={() => toggleActive(company.id, company.isActive)} />
+                      </td>
+                      <td className="px-4 py-4">
+                        <Link href={`/admin/companies/${company.id}`}>
+                          <Button variant="outline" size="sm">詳細</Button>
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </CardContent>

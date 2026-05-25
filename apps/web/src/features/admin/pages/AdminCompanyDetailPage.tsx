@@ -8,23 +8,54 @@ import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
 import { Badge } from "@/shared/ui/badge";
 import { Textarea } from "@/shared/ui/textarea";
-import { adminApi } from "@/features/admin/api/admin-api";
+import { Input } from "@/shared/ui/input";
+import { Label } from "@/shared/ui/label";
+import { adminApi, type AdminPlanType } from "@/features/admin/api/admin-api";
 
 interface AdminCompanyDetailPageProps {
   id: string;
 }
 
+interface PlanForm {
+  planType: AdminPlanType;
+  monthlyPrice: number;
+  maxMinutesPerMonth: number;
+  trialEndsAt: string; // "yyyy-MM-dd" (空文字 = 未設定)
+}
+
+const DEFAULT_PLAN: PlanForm = {
+  planType: "TRIAL",
+  monthlyPrice: 0,
+  maxMinutesPerMonth: 30,
+  trialEndsAt: "",
+};
+
+function isoToDateInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return iso.slice(0, 10);
+}
+
 export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
   const [company, setCompany] = useState<any>(null);
   const [notes, setNotes] = useState("");
+  const [planForm, setPlanForm] = useState<PlanForm>(DEFAULT_PLAN);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingPlan, setSavingPlan] = useState(false);
 
   useEffect(() => {
     adminApi.getCompany(id)
       .then((res: any) => {
-        setCompany(res.data);
-        setNotes(res.data.adminNotes ?? "");
+        const c = res.data;
+        setCompany(c);
+        setNotes(c.adminNotes ?? "");
+        const sub = c.subscription;
+        setPlanForm({
+          planType: (sub?.plan?.type as AdminPlanType) ?? "TRIAL",
+          monthlyPrice: sub?.monthlyPrice ?? 0,
+          maxMinutesPerMonth: sub?.maxMinutesPerMonth ?? 30,
+          trialEndsAt: isoToDateInput(sub?.trialEndsAt),
+        });
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -52,6 +83,26 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
     }
   };
 
+  const handleSavePlan = async () => {
+    setSavingPlan(true);
+    try {
+      const res: any = await adminApi.updateCompanyPlan(id, {
+        planType: planForm.planType,
+        monthlyPrice: planForm.planType === "PAID" ? planForm.monthlyPrice : 0,
+        maxMinutesPerMonth: planForm.maxMinutesPerMonth,
+        trialEndsAt:
+          planForm.planType === "TRIAL" && planForm.trialEndsAt
+            ? new Date(`${planForm.trialEndsAt}T00:00:00`).toISOString()
+            : null,
+      });
+      setCompany((prev: any) => ({ ...prev, subscription: res.data }));
+    } catch (e: any) {
+      alert(e?.message ?? "保存に失敗しました");
+    } finally {
+      setSavingPlan(false);
+    }
+  };
+
   if (loading) {
     return (
       <>
@@ -66,7 +117,7 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
       <>
         <Header title="企業詳細" />
         <main className="flex-1 p-6">
-          <Link href="/admin"><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-2" />戻る</Button></Link>
+          <Link href="/admin/companies"><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-2" />戻る</Button></Link>
           <p className="text-sm text-red-500 mt-4">企業が見つかりませんでした</p>
         </main>
       </>
@@ -77,14 +128,15 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
   const usage = company.usageRecords?.find(
     (r: any) => r.year === now.getFullYear() && r.month === now.getMonth() + 1
   );
+  const planLabel = planForm.planType === "PAID" ? "有料会員" : "無料体験";
 
   return (
     <>
       <Header title="企業詳細" />
       <main className="flex-1 p-6 space-y-6 max-w-5xl mx-auto">
-        <Link href="/admin">
+        <Link href="/admin/companies">
           <Button variant="ghost" size="sm">
-            <ArrowLeft className="w-4 h-4 mr-2" />管理者ダッシュボードに戻る
+            <ArrowLeft className="w-4 h-4 mr-2" />企業管理に戻る
           </Button>
         </Link>
 
@@ -111,7 +163,7 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { label: "プラン", value: company.subscription?.plan?.name ?? "なし", icon: CreditCard },
+            { label: "プラン", value: planLabel, icon: CreditCard },
             { label: "今月通話数", value: `${usage?.totalCalls ?? 0}件`, icon: Phone },
             { label: "今月通話時間", value: `${usage?.totalMinutes ?? 0}分`, icon: Clock },
             { label: "電話番号数", value: `${company.phoneNumbers?.length ?? 0}番号`, icon: Phone },
@@ -128,27 +180,88 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CreditCard className="w-5 h-5" />契約・請求情報
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {[
-                { label: "プラン", value: <Badge>{company.subscription?.plan?.name ?? "なし"}</Badge> },
-                { label: "月額料金", value: <span className="text-sm font-medium">¥{(company.subscription?.plan?.priceMonthly ?? 0).toLocaleString()}</span> },
-                { label: "ステータス", value: <Badge variant={company.isActive ? "success" : "secondary"}>{company.isActive ? "アクティブ" : "停止中"}</Badge> },
-              ].map(({ label, value }) => (
-                <div key={label} className="flex justify-between items-center py-2 border-b border-gray-100 last:border-0">
-                  <span className="text-sm text-gray-500">{label}</span>
-                  {value}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CreditCard className="w-5 h-5" />プラン設定
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <Label className="text-sm">プラン種別</Label>
+              <div className="mt-2 flex gap-2">
+                {(["TRIAL", "PAID"] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setPlanForm((p) => ({ ...p, planType: t }))}
+                    className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                      planForm.planType === t
+                        ? "bg-blue-50 border-blue-500 text-blue-700"
+                        : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    {t === "TRIAL" ? "無料体験" : "有料会員"}
+                  </button>
+                ))}
+              </div>
+            </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {planForm.planType === "PAID" && (
+                <div>
+                  <Label htmlFor="monthlyPrice" className="text-sm">月額料金 (円)</Label>
+                  <Input
+                    id="monthlyPrice"
+                    type="number"
+                    min={0}
+                    value={planForm.monthlyPrice}
+                    onChange={(e) =>
+                      setPlanForm((p) => ({ ...p, monthlyPrice: Number(e.target.value) || 0 }))
+                    }
+                  />
+                </div>
+              )}
+
+              <div>
+                <Label htmlFor="maxMinutes" className="text-sm">月間通話分数 上限</Label>
+                <Input
+                  id="maxMinutes"
+                  type="number"
+                  min={0}
+                  value={planForm.maxMinutesPerMonth}
+                  onChange={(e) =>
+                    setPlanForm((p) => ({ ...p, maxMinutesPerMonth: Number(e.target.value) || 0 }))
+                  }
+                />
+              </div>
+
+              {planForm.planType === "TRIAL" && (
+                <div>
+                  <Label htmlFor="trialEndsAt" className="text-sm">トライアル期限日</Label>
+                  <Input
+                    id="trialEndsAt"
+                    type="date"
+                    value={planForm.trialEndsAt}
+                    onChange={(e) =>
+                      setPlanForm((p) => ({ ...p, trialEndsAt: e.target.value }))
+                    }
+                  />
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs text-gray-400">
+              ※ 電話番号は1企業につき1つまで（固定）
+            </p>
+
+            <Button size="sm" onClick={handleSavePlan} disabled={savingPlan}>
+              {savingPlan ? "保存中..." : "プラン設定を保存"}
+            </Button>
+          </CardContent>
+        </Card>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -176,7 +289,7 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
             </CardContent>
           </Card>
 
-          <Card className="lg:col-span-2">
+          <Card>
             <CardHeader><CardTitle>管理メモ</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               <Textarea

@@ -320,34 +320,19 @@ enum NotificationType {
 // Plan & Billing
 // ============================================================
 
+// プランは TRIAL / PAID の2種類だけ。料金や上限は会社ごとに Subscription 側で設定する。
 model Plan {
-  id                     String   @id @default(cuid())
-  name                   String
-  type                   PlanType @unique
-  priceMonthly           Int
-  maxPhoneNumbers        Int
-  maxMinutesPerMonth     Int
-  maxFaqs                Int
-  hasMultipleFlows       Boolean  @default(false)
-  hasSlackNotification   Boolean  @default(false)
-  hasMemberManagement    Boolean  @default(false)
-  hasTransfer            Boolean  @default(false)
-  hasAdvancedConditions  Boolean  @default(false)
-  hasExternalIntegration Boolean  @default(false)
-  hasPrioritySupport     Boolean  @default(false)
-  hasDedicatedEnv        Boolean  @default(false)
-  isActive               Boolean  @default(true)
-  createdAt              DateTime @default(now())
+  id        String   @id @default(cuid())
+  name      String
+  type      PlanType @unique
+  createdAt DateTime @default(now())
 
   subscriptions Subscription[]
 }
 
 enum PlanType {
   TRIAL
-  STARTER
-  BUSINESS
-  PRO
-  ENTERPRISE
+  PAID
 }
 
 model Subscription {
@@ -358,7 +343,10 @@ model Subscription {
   currentPeriodStart DateTime
   currentPeriodEnd   DateTime
   cancelAtPeriodEnd  Boolean            @default(false)
-  extraPhoneNumbers  Int                @default(0)
+  // 会社ごとの個別設定（運営者が編集する）
+  monthlyPrice       Int                @default(0)
+  maxMinutesPerMonth Int                @default(30)
+  trialEndsAt        DateTime?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 

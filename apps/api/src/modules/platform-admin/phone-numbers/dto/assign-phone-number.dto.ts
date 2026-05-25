@@ -9,4 +9,3 @@ export class AssignPhoneNumberDto {
   @IsString()
   companyId?: string | null;
 }
-
