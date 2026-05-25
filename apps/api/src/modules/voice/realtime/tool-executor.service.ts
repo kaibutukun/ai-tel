@@ -36,15 +36,8 @@ export interface ToolExecutionResult {
     | { kind: "end_call"; reason?: string };
 }
 
-type KnowledgeSourceLite = {
-  id?: string;
-  source?: string;
-  faqId?: string;
-  documentId?: string;
-  category?: string;
-  title?: string;
-  score?: number;
-};
+type AnswerResult = Awaited<ReturnType<AiService["answer"]>>;
+type AnswerSource = AnswerResult["data"]["sources"][number];
 
 @Injectable()
 export class ToolExecutorService {
@@ -177,10 +170,8 @@ export class ToolExecutorService {
         question: query,
         minScore,
       });
-      await this.persistFaqUsage(result.data.sources, ctx);
-      return {
-        output: this.buildSearchOutput(result, ctx, "faq"),
-      };
+      await this.persistTopFaq(result.data.sources, ctx.callSessionId);
+      return { output: this.buildSearchOutput(result, ctx, "faq") };
     } catch (err) {
       return this.failure(ctx, (err as Error).message);
     }
@@ -202,7 +193,6 @@ export class ToolExecutorService {
         question: query,
         minScore,
       });
-      await this.persistDocumentUsage(result.data.sources, ctx);
       return {
         output: this.buildSearchOutput(result, ctx, "document"),
       };
@@ -212,34 +202,24 @@ export class ToolExecutorService {
   }
 
   /**
-   * 検索結果を脳向けに整形する。
-   * ok を sources の有無で決め、ヒット 0 でも meta (rawHits / topScore / minScore) を
-   * 同梱することで「閾値が厳しすぎて弾かれた (topScore が惜しい)」のか「そもそも
-   * 知識ベースに該当が無い (rawHits=0 or topScore が大きく下回る)」のかを脳が判断できるようにする。
+   * 検索結果を脳向けに整形する。ヒット 0 でも meta (rawHits / topScore / minScore) を
+   * 返し、「閾値で弾かれた」のか「知識ベースに該当が無い」のかを脳が判別できるようにする。
    */
   private buildSearchOutput(
-    result: Awaited<ReturnType<AiService["answer"]>>,
+    result: AnswerResult,
     ctx: ToolContext,
     kind: "faq" | "document"
   ): Record<string, unknown> {
-    const sources = result.data.sources;
-    const hasSources = sources.length > 0;
-    const meta = result.data.meta;
+    const { sources, meta, answer } = result.data;
     const label = kind === "faq" ? "FAQ" : "資料";
-    const noHitMessage = (() => {
-      if (meta.rawHits === 0) {
-        return `${label}は登録知識ベースから 1 件も候補が出ませんでした。`;
-      }
-      const topScore = meta.topScore.toFixed(3);
-      return (
-        `${label}の候補 ${meta.rawHits} 件のうち、` +
-        `フローの閾値 ${meta.minScore} 以上を満たすものがありませんでした (最高 ${topScore})。`
-      );
-    })();
+    const noHit =
+      meta.rawHits === 0
+        ? `${label}は登録知識ベースから 1 件も候補が出ませんでした。`
+        : `${label}の候補 ${meta.rawHits} 件のうち、フローの閾値 ${meta.minScore} 以上を満たすものがありませんでした (最高 ${meta.topScore.toFixed(3)})。`;
 
     return {
-      ok: hasSources,
-      answer: hasSources ? result.data.answer : noHitMessage,
+      ok: sources.length > 0,
+      answer: sources.length > 0 ? answer : noHit,
       sources,
       meta,
       snapshot: this.snapshot(ctx),
@@ -465,103 +445,26 @@ export class ToolExecutorService {
     }
   }
 
-  private async persistFaqUsage(
-    rawSources: unknown,
-    ctx: ToolContext
-  ) {
-    if (!ctx.callSessionId || !Array.isArray(rawSources)) return;
-    const sources = rawSources as KnowledgeSourceLite[];
-    const faqIds = this.unique(
-      sources
-        .filter((source) => source.source === "faq" || source.faqId)
-        .map((source) => source.faqId ?? source.id)
-        .filter((id): id is string => Boolean(id))
-    );
-    if (faqIds.length === 0) return;
+  /**
+   * sources のうち閾値を超えた最上位 FAQ 1 件だけを記録する。
+   * AiService が score 降順で返すため最初の faq ソースが top-1。
+   * 同じ通話内で別の FAQ にヒットすればその分エントリが増え、
+   * 同じ FAQ への再ヒットは @@unique で自然に dedupe される。
+   */
+  private async persistTopFaq(sources: AnswerSource[], callSessionId: string) {
+    if (!callSessionId) return;
+    const top = sources.find((s) => s.source === "faq" || s.faqId);
+    const faqId = top?.faqId ?? top?.id;
+    if (!faqId) return;
 
     try {
-      const faqs = await this.prisma.fAQ.findMany({
-        where: { id: { in: faqIds }, companyId: ctx.companyId },
-        select: { id: true, category: true },
+      await this.prisma.callSessionFaq.upsert({
+        where: { callSessionId_faqId: { callSessionId, faqId } },
+        create: { callSessionId, faqId },
+        update: {},
       });
-      if (faqs.length === 0) return;
-
-      await Promise.all(
-        faqs.map((faq) =>
-          this.prisma.callSessionFaq.upsert({
-            where: {
-              callSessionId_faqId: {
-                callSessionId: ctx.callSessionId,
-                faqId: faq.id,
-              },
-            },
-            create: { callSessionId: ctx.callSessionId, faqId: faq.id },
-            update: {},
-          })
-        )
-      );
-
-      const category =
-        faqs.find((faq) => faq.category)?.category ??
-        sources.find((source) => source.category)?.category;
-      if (category) {
-        await this.prisma.callSession.update({
-          where: { id: ctx.callSessionId },
-          data: { category },
-        });
-      }
     } catch (err) {
-      this.logger.warn(
-        `Failed to persist FAQ usage: ${(err as Error).message}`
-      );
+      this.logger.warn(`Failed to persist FAQ usage: ${(err as Error).message}`);
     }
-  }
-
-  private async persistDocumentUsage(
-    rawSources: unknown,
-    ctx: ToolContext
-  ) {
-    if (!ctx.callSessionId || !Array.isArray(rawSources)) return;
-    const sources = rawSources as KnowledgeSourceLite[];
-    const documentIds = this.unique(
-      sources
-        .filter((source) => source.source === "document" || source.documentId)
-        .map((source) => source.documentId ?? source.id)
-        .filter((id): id is string => Boolean(id))
-    );
-    if (documentIds.length === 0) return;
-
-    try {
-      const documents = await this.prisma.document.findMany({
-        where: { id: { in: documentIds }, companyId: ctx.companyId },
-        select: { id: true },
-      });
-
-      await Promise.all(
-        documents.map((document) =>
-          this.prisma.callSessionDocument.upsert({
-            where: {
-              callSessionId_documentId: {
-                callSessionId: ctx.callSessionId,
-                documentId: document.id,
-              },
-            },
-            create: {
-              callSessionId: ctx.callSessionId,
-              documentId: document.id,
-            },
-            update: {},
-          })
-        )
-      );
-    } catch (err) {
-      this.logger.warn(
-        `Failed to persist document usage: ${(err as Error).message}`
-      );
-    }
-  }
-
-  private unique(values: string[]): string[] {
-    return Array.from(new Set(values));
   }
 }

@@ -7,7 +7,7 @@ import {
   Bell,
   ClipboardList,
 } from "lucide-react";
-import { ActionNodeData, ACTION_LABELS, ActionType } from "../types";
+import { ActionNodeData, ACTION_LABELS, ActionType, FAQ_PRECISION_DEFAULT } from "../types";
 
 // callback (折り返し受付) は廃止。残りの actionType を表示マッピング。
 const ICONS: Record<ActionType, React.ReactNode> = {
@@ -77,8 +77,10 @@ function ActionNode({ data, selected }: NodeProps<ActionNodeData>) {
             ))}
           </div>
         )}
-        {(type === "faq" || type === "rag") && (
-          <p className="text-xs text-gray-400 italic">設定不要（呼び出しのみ）</p>
+        {type === "faq" && (
+          <p className="text-xs text-gray-500">
+            厳しさ: {(data.precision ?? FAQ_PRECISION_DEFAULT).toFixed(2)}
+          </p>
         )}
         {(type === "transfer" || type === "notify") && !data.target && (
           <p className="text-xs text-gray-400 italic">設定してください</p>

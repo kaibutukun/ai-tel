@@ -32,7 +32,7 @@ export class CallSessionsService {
     };
   }
 
-  /** 通話詳細（書き起こし・サマリー・使用FAQ/ドキュメントを含む） */
+  /** 通話詳細（書き起こし・サマリー・使用FAQを含む） */
   async findOne(id: string) {
     const session = await this.prisma.callSession.findUnique({
       where: { id },
@@ -42,7 +42,6 @@ export class CallSessionsService {
         transcripts: { orderBy: { timestamp: "asc" } },
         summaries: true,
         sessionFaqs: { include: { faq: { select: { question: true } } } },
-        sessionDocs: { include: { document: { select: { name: true } } } },
       },
     });
     if (!session) throw new NotFoundException("通話セッションが見つかりません");

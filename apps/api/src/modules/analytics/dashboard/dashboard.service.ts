@@ -19,9 +19,14 @@ export class DashboardService {
     weekStart.setHours(0, 0, 0, 0);
 
     // 今日の通話セッションを全件取得
+    // 「よくある問い合わせ」は CallSession.category を廃止したため、
+    // セッション内で記録された FAQ (sessionFaqs.faq.category) から集計する。
     const todaySessions = await this.prisma.callSession.findMany({
       where: { companyId, startedAt: { gte: todayStart } },
-      select: { result: true, isAiHandled: true, callbackNeeded: true, category: true },
+      select: {
+        result: true,
+        sessionFaqs: { select: { faq: { select: { category: true } } } },
+      },
     });
 
     // 今日の統計
@@ -57,11 +62,17 @@ export class DashboardService {
       };
     });
 
-    // カテゴリ別集計（今日）
+    // カテゴリ別集計（今日）: セッションに紐付いた FAQ のカテゴリを 1 セッションあたり 1 回数える。
+    // (search_faq は top-1 のみ記録するため通常 0〜1 件、複数異なる FAQ がヒットすれば複数あり得る)
     const categoryCounts: Record<string, number> = {};
     for (const s of todaySessions) {
-      if (s.category) {
-        categoryCounts[s.category] = (categoryCounts[s.category] ?? 0) + 1;
+      const categories = new Set(
+        s.sessionFaqs
+          .map((sf) => sf.faq.category)
+          .filter((c): c is string => Boolean(c))
+      );
+      for (const category of categories) {
+        categoryCounts[category] = (categoryCounts[category] ?? 0) + 1;
       }
     }
     const topInquiries = Object.entries(categoryCounts)

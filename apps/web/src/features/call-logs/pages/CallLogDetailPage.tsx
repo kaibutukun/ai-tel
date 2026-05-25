@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Bot, User, Play, MessageSquare, FileText, BookOpen } from "lucide-react";
+import { ArrowLeft, Bot, User, Play, MessageSquare, BookOpen } from "lucide-react";
 import { Header } from "@/shared/layout/header";
 import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
@@ -67,12 +67,11 @@ export function CallLogDetailPage({ id }: CallLogDetailPageProps) {
           </Button>
         </Link>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           {[
             { label: "通話日時", value: formatDate(log.startedAt) },
             { label: "発信者番号", value: log.callerNumber ?? "非通知" },
             { label: "通話時間", value: formatDuration(log.durationSeconds) },
-            { label: "用件カテゴリ", value: log.category ?? "—" },
           ].map(({ label, value }) => (
             <Card key={label}>
               <CardContent className="p-4">
@@ -151,21 +150,6 @@ export function CallLogDetailPage({ id }: CallLogDetailPageProps) {
                   <div className="space-y-2">
                     {log.sessionFaqs.map((sf, i) => (
                       <div key={i} className="text-sm text-gray-700 bg-gray-50 px-3 py-2 rounded-md">{sf.faq.question}</div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-400">使用なし</p>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader><CardTitle className="flex items-center gap-2"><FileText className="w-5 h-5" />使用した参考資料</CardTitle></CardHeader>
-              <CardContent>
-                {log.sessionDocs.length > 0 ? (
-                  <div className="space-y-2">
-                    {log.sessionDocs.map((sd, i) => (
-                      <div key={i} className="text-sm text-gray-700 bg-gray-50 px-3 py-2 rounded-md">{sd.document.name}</div>
                     ))}
                   </div>
                 ) : (

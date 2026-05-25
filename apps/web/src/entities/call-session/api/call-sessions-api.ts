@@ -6,9 +6,6 @@ export interface CallSession {
   startedAt: string;
   durationSeconds: number | null;
   result: "AI_RESOLVED" | "TRANSFERRED" | "CALLBACK_REQUESTED" | "NO_ANSWER" | "VOICEMAIL";
-  category: string | null;
-  isAiHandled: boolean;
-  callbackNeeded: boolean;
   callFlow: { name: string } | null;
   phoneNumber: { number: string; displayName: string | null } | null;
 }
@@ -19,7 +16,6 @@ export interface CallSessionDetail extends CallSession {
   transcripts: { speaker: string; content: string; timestamp: number }[];
   summaries: { summary: string; extractedData: unknown; sentiment: string | null }[];
   sessionFaqs: { faq: { question: string } }[];
-  sessionDocs: { document: { name: string } }[];
 }
 
 interface ListResponse { data: CallSession[]; meta: { total: number; page: number; limit: number } }

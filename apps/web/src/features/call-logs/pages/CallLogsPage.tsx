@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { Phone, Bot, User, PhoneCall } from "lucide-react";
+import { Phone } from "lucide-react";
 import { Header } from "@/shared/layout/header";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -64,14 +64,14 @@ export function CallLogsPage() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {["通話日時", "発信者番号", "対応フロー", "用件", "対応結果", "通話時間", "担当", "折り返し", "詳細"].map((h) => (
+                  {["通話日時", "発信者番号", "対応フロー", "対応結果", "通話時間", "詳細"].map((h) => (
                     <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {logs.length === 0 && (
-                  <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">通話ログがありません</td></tr>
+                  <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-gray-400">通話ログがありません</td></tr>
                 )}
                 {logs.map((log) => {
                   const result = resultConfig[log.result];
@@ -85,21 +85,8 @@ export function CallLogsPage() {
                         </div>
                       </td>
                       <td className="px-4 py-4 text-sm text-gray-600">{log.callFlow?.name ?? "—"}</td>
-                      <td className="px-4 py-4">
-                        {log.category ? <Badge variant="secondary">{log.category}</Badge> : <span className="text-gray-400 text-sm">—</span>}
-                      </td>
                       <td className="px-4 py-4"><Badge variant={result.variant}>{result.label}</Badge></td>
                       <td className="px-4 py-4 text-sm text-gray-600">{formatDuration(log.durationSeconds)}</td>
-                      <td className="px-4 py-4">
-                        {log.isAiHandled
-                          ? <div className="flex items-center gap-1 text-blue-600 text-xs"><Bot className="w-3.5 h-3.5" /> AI</div>
-                          : <div className="flex items-center gap-1 text-orange-600 text-xs"><User className="w-3.5 h-3.5" /> 人間</div>}
-                      </td>
-                      <td className="px-4 py-4">
-                        {log.callbackNeeded
-                          ? <div className="flex items-center gap-1 text-purple-600 text-xs"><PhoneCall className="w-3.5 h-3.5" /> 要折返</div>
-                          : <span className="text-xs text-gray-400">—</span>}
-                      </td>
                       <td className="px-4 py-4">
                         <Link href={`/call-logs/${log.id}`}>
                           <Button variant="outline" size="sm">詳細</Button>

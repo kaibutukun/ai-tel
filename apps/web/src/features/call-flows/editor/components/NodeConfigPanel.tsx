@@ -12,7 +12,6 @@ import {
   ConditionNodeData,
   ActionNodeData,
   EndNodeData,
-  ACTION_LABELS,
   MessageStrictness,
   FAQ_PRECISION_DEFAULT,
   FAQ_PRECISION_MIN,
@@ -217,8 +216,7 @@ function ConditionConfig({
   );
 }
 
-// アクションノード設定: actionType ドロップダウンは廃止。
-// 種別はパレットから追加した時点で確定し、ここでは種別固有のパラメータのみ編集する。
+// アクションノード設定: 種別はパレットから追加した時点で確定。ここでは種別固有のパラメータのみ編集する。
 function ActionConfig({
   data,
   update,
@@ -237,14 +235,6 @@ function ActionConfig({
 
   return (
     <div className="space-y-4">
-      {/* 種別表示（読み取り専用） */}
-      <div className="space-y-1">
-        <Label className="text-xs">種別</Label>
-        <div className="text-xs font-medium text-gray-700 px-2 py-1.5 bg-gray-50 rounded-md border border-gray-200">
-          {ACTION_LABELS[data.actionType] || data.actionType}
-        </div>
-      </div>
-
       {(data.actionType === "transfer" || data.actionType === "notify") && (
         <div className="space-y-1.5">
           <Label className="text-xs">
