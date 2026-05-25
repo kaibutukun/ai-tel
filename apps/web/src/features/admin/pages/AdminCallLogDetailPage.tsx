@@ -58,7 +58,7 @@ export function AdminCallLogDetailPage({ id }: AdminCallLogDetailPageProps) {
     return (
       <>
         <Header title="通話履歴 詳細" />
-        <main className="flex-1 p-6">
+        <main className="flex-1 w-full p-4 sm:p-6">
           <p className="text-sm text-gray-400">読み込み中...</p>
         </main>
       </>
@@ -69,7 +69,7 @@ export function AdminCallLogDetailPage({ id }: AdminCallLogDetailPageProps) {
     return (
       <>
         <Header title="通話履歴 詳細" />
-        <main className="flex-1 p-6">
+        <main className="flex-1 w-full p-4 sm:p-6">
           <Link href="/admin/call-logs">
             <Button variant="ghost" size="sm">
               <ArrowLeft className="w-4 h-4 mr-2" />戻る
@@ -87,14 +87,14 @@ export function AdminCallLogDetailPage({ id }: AdminCallLogDetailPageProps) {
   return (
     <>
       <Header title="通話履歴 詳細" />
-      <main className="flex-1 p-6 space-y-6 max-w-5xl mx-auto">
+      <main className="flex-1 w-full space-y-4 p-4 sm:space-y-6 sm:p-6">
         <Link href="/admin/call-logs">
           <Button variant="ghost" size="sm">
             <ArrowLeft className="w-4 h-4 mr-2" />通話履歴一覧に戻る
           </Button>
         </Link>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Card>
             <CardContent className="p-4">
               <p className="text-xs text-gray-400 mb-1 flex items-center gap-1">
@@ -126,7 +126,7 @@ export function AdminCallLogDetailPage({ id }: AdminCallLogDetailPageProps) {
           ))}
         </div>
 
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-sm sm:gap-3">
           <Badge variant="outline">{resultLabels[log.result]}</Badge>
           {log.callFlow && (
             <span className="text-gray-600">フロー: {log.callFlow.name}</span>
@@ -138,7 +138,7 @@ export function AdminCallLogDetailPage({ id }: AdminCallLogDetailPageProps) {
           )}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

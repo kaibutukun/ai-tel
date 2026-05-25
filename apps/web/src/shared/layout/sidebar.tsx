@@ -17,6 +17,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
+import { useSidebar } from "@/shared/layout/sidebar-context";
 import { clearAuth, getCurrentUser, getAuthToken } from "@/shared/auth/session";
 import { decodeJwtPayload } from "@/shared/auth/jwt";
 import { useEffect, useState } from "react";
@@ -34,17 +35,20 @@ const navItems = [
 ];
 
 const adminItems = [
+  { href: "/admin", label: "ダッシュボード", icon: LayoutDashboard },
   { href: "/admin/companies", label: "企業管理", icon: Building2 },
   { href: "/admin/phone-numbers", label: "電話番号管理", icon: Phone },
   { href: "/admin/call-logs", label: "通話履歴", icon: PhoneCall },
 ];
 
 function isActivePath(pathname: string, href: string) {
+  if (href === "/admin") return pathname === "/admin";
   return pathname === href || pathname.startsWith(href + "/");
 }
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { open, setOpen } = useSidebar();
   const [user, setUser] = useState<{ name: string; email: string; adminRole: boolean } | null>(null);
 
   useEffect(() => {
@@ -70,10 +74,26 @@ export function Sidebar() {
 
   const initial = user?.name?.[0]?.toUpperCase() ?? "?";
 
+  const close = () => setOpen(false);
+
   return (
-    <aside className="fixed inset-y-0 left-0 z-50 w-60 bg-white border-r border-gray-200 flex flex-col">
+    <>
+      {open && (
+        <button
+          type="button"
+          aria-label="メニューを閉じる"
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          onClick={close}
+        />
+      )}
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-gray-200 bg-white transition-transform duration-200 lg:translate-x-0",
+          open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        )}
+      >
       <div className="h-16 flex items-center px-6 border-b border-gray-200">
-        <Link href="/dashboard" className="flex items-center gap-2">
+        <Link href="/dashboard" onClick={close} className="flex items-center gap-2">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
             <Phone className="w-4 h-4 text-white" />
           </div>
@@ -86,6 +106,7 @@ export function Sidebar() {
           <Link
             key={href}
             href={href}
+            onClick={close}
             className={cn(
               "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
               pathname === href || pathname.startsWith(href + "/")
@@ -109,6 +130,7 @@ export function Sidebar() {
               <Link
                 key={href}
                 href={href}
+                onClick={close}
                 className={cn(
                   "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                   isActivePath(pathname, href)
@@ -127,6 +149,7 @@ export function Sidebar() {
       <div className="p-4 border-t border-gray-200 space-y-2">
         <Link
           href="/settings"
+          onClick={close}
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100"
         >
           <Settings className="w-4 h-4" />
@@ -152,5 +175,6 @@ export function Sidebar() {
         </div>
       </div>
     </aside>
+    </>
   );
 }

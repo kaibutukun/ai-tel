@@ -2,14 +2,14 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Building2, Phone, Clock, CreditCard, FileText } from "lucide-react";
+import { ArrowLeft, Building2, Phone, Clock, CreditCard } from "lucide-react";
 import { Header } from "@/shared/layout/header";
 import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
-import { Badge } from "@/shared/ui/badge";
 import { Textarea } from "@/shared/ui/textarea";
 import { Input } from "@/shared/ui/input";
 import { Label } from "@/shared/ui/label";
+import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { adminApi, type AdminPlanType } from "@/features/admin/api/admin-api";
 
 interface AdminCompanyDetailPageProps {
@@ -42,6 +42,8 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingPlan, setSavingPlan] = useState(false);
+  const [stopDialogOpen, setStopDialogOpen] = useState(false);
+  const [togglingActive, setTogglingActive] = useState(false);
 
   useEffect(() => {
     adminApi.getCompany(id)
@@ -74,12 +76,24 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
 
   const handleToggleActive = async () => {
     if (!company) return;
-    if (!confirm(`この企業を${company.isActive ? "停止" : "有効化"}しますか？`)) return;
+    if (company.isActive) {
+      setStopDialogOpen(true);
+      return;
+    }
+    await applyToggleActive();
+  };
+
+  const applyToggleActive = async () => {
+    if (!company) return;
+    setTogglingActive(true);
     try {
       await adminApi.updateCompany(id, { isActive: !company.isActive });
       setCompany((prev: any) => ({ ...prev, isActive: !prev.isActive }));
+      setStopDialogOpen(false);
     } catch {
       alert("更新に失敗しました");
+    } finally {
+      setTogglingActive(false);
     }
   };
 
@@ -107,7 +121,9 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
     return (
       <>
         <Header title="企業詳細" />
-        <main className="flex-1 p-6"><p className="text-sm text-gray-400">読み込み中...</p></main>
+        <main className="flex-1 w-full p-4 sm:p-6">
+          <p className="text-sm text-gray-400">読み込み中...</p>
+        </main>
       </>
     );
   }
@@ -116,7 +132,7 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
     return (
       <>
         <Header title="企業詳細" />
-        <main className="flex-1 p-6">
+        <main className="flex-1 w-full p-4 sm:p-6">
           <Link href="/admin/companies"><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-2" />戻る</Button></Link>
           <p className="text-sm text-red-500 mt-4">企業が見つかりませんでした</p>
         </main>
@@ -133,20 +149,20 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
   return (
     <>
       <Header title="企業詳細" />
-      <main className="flex-1 p-6 space-y-6 max-w-5xl mx-auto">
+      <main className="flex-1 w-full space-y-4 p-4 sm:space-y-6 sm:p-6">
         <Link href="/admin/companies">
           <Button variant="ghost" size="sm">
             <ArrowLeft className="w-4 h-4 mr-2" />企業管理に戻る
           </Button>
         </Link>
 
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center">
-              <Building2 className="w-6 h-6 text-blue-600" />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-50">
+              <Building2 className="h-6 w-6 text-blue-600" />
             </div>
-            <div>
-              <h2 className="text-xl font-bold text-gray-900">{company.name}</h2>
+            <div className="min-w-0">
+              <h2 className="truncate text-lg font-bold text-gray-900 sm:text-xl">{company.name}</h2>
               <p className="text-sm text-gray-500">
                 登録日: {new Date(company.createdAt).toLocaleDateString("ja-JP")}
               </p>
@@ -154,27 +170,28 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
           </div>
           <Button
             variant="outline"
-            className={company.isActive ? "text-red-600 border-red-200 hover:bg-red-50" : "text-green-600 border-green-200 hover:bg-green-50"}
+            className={`w-full shrink-0 sm:w-auto ${company.isActive ? "text-red-600 border-red-200 hover:bg-red-50" : "text-green-600 border-green-200 hover:bg-green-50"}`}
             onClick={handleToggleActive}
           >
             {company.isActive ? "アカウント停止" : "アカウント有効化"}
           </Button>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {[
-            { label: "プラン", value: planLabel, icon: CreditCard },
-            { label: "今月通話数", value: `${usage?.totalCalls ?? 0}件`, icon: Phone },
-            { label: "今月通話時間", value: `${usage?.totalMinutes ?? 0}分`, icon: Clock },
-            { label: "電話番号数", value: `${company.phoneNumbers?.length ?? 0}番号`, icon: Phone },
-          ].map(({ label, value, icon: Icon }) => (
-            <Card key={label}>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Icon className="w-4 h-4 text-gray-400" />
-                  <p className="text-xs text-gray-400">{label}</p>
+            { label: "プラン", value: planLabel, icon: CreditCard, color: "text-green-600", bg: "bg-green-50" },
+            { label: "今月通話数", value: `${usage?.totalCalls ?? 0}件`, icon: Phone, color: "text-purple-600", bg: "bg-purple-50" },
+            { label: "今月通話時間", value: `${usage?.totalMinutes ?? 0}分`, icon: Clock, color: "text-orange-600", bg: "bg-orange-50" },
+          ].map((stat) => (
+            <Card key={stat.label}>
+              <CardContent className="p-4 sm:p-5">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm text-gray-500">{stat.label}</p>
+                  <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${stat.bg}`}>
+                    <stat.icon className={`h-4 w-4 ${stat.color}`} />
+                  </div>
                 </div>
-                <p className="text-lg font-semibold text-gray-900">{value}</p>
+                <p className="text-xl font-bold text-gray-900 sm:text-2xl">{stat.value}</p>
               </CardContent>
             </Card>
           ))}
@@ -189,13 +206,13 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
           <CardContent className="space-y-4">
             <div>
               <Label className="text-sm">プラン種別</Label>
-              <div className="mt-2 flex gap-2">
+              <div className="mt-2 flex flex-wrap gap-2">
                 {(["TRIAL", "PAID"] as const).map((t) => (
                   <button
                     key={t}
                     type="button"
                     onClick={() => setPlanForm((p) => ({ ...p, planType: t }))}
-                    className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                    className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition-colors sm:flex-none ${
                       planForm.planType === t
                         ? "bg-blue-50 border-blue-500 text-blue-700"
                         : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
@@ -255,56 +272,48 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
               ※ 電話番号は1企業につき1つまで（固定）
             </p>
 
-            <Button size="sm" onClick={handleSavePlan} disabled={savingPlan}>
+            <Button size="sm" className="w-full sm:w-auto" onClick={handleSavePlan} disabled={savingPlan}>
               {savingPlan ? "保存中..." : "プラン設定を保存"}
             </Button>
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="w-5 h-5" />請求履歴
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {company.invoices?.length > 0 ? (
-                <div className="space-y-2">
-                  {company.invoices.map((inv: any) => (
-                    <div key={`${inv.year}-${inv.month}`} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                      <span className="text-sm text-gray-700">{inv.year}/{String(inv.month).padStart(2, "0")}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="text-sm font-medium">¥{inv.total.toLocaleString()}</span>
-                        <Badge variant={inv.status === "PAID" ? "success" : "secondary"}>
-                          {inv.status === "PAID" ? "支払済" : inv.status}
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-gray-400">請求履歴がありません</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader><CardTitle>管理メモ</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <Textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={4}
-                placeholder="企業に関するメモを入力..."
-              />
-              <Button size="sm" onClick={handleSaveNotes} disabled={saving}>
-                {saving ? "保存中..." : "メモを保存"}
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
+        <Card>
+          <CardHeader><CardTitle>管理メモ</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={4}
+              placeholder="企業に関するメモを入力..."
+            />
+            <Button size="sm" className="w-full sm:w-auto" onClick={handleSaveNotes} disabled={saving}>
+              {saving ? "保存中..." : "メモを保存"}
+            </Button>
+          </CardContent>
+        </Card>
       </main>
+
+      {stopDialogOpen && (
+        <ConfirmDialog
+          title="この企業を停止しますか？"
+          description={
+            <div className="space-y-2">
+              <p>
+                <span className="font-semibold text-gray-900">{company.name}</span> を停止します。
+              </p>
+              <p className="text-xs text-gray-500">
+                停止中はログインや新規通話の受付ができなくなります。あとから「アカウント有効化」で復帰できます。
+              </p>
+            </div>
+          }
+          confirmLabel="停止する"
+          cancelLabel="キャンセル"
+          loading={togglingActive}
+          onCancel={() => setStopDialogOpen(false)}
+          onConfirm={applyToggleActive}
+        />
+      )}
     </>
   );
 }

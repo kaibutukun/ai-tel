@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Phone, CheckCircle, ArrowRightLeft, PhoneCall, AlertCircle, TrendingUp,
+  Phone, CheckCircle, ArrowRightLeft, AlertCircle, TrendingUp,
 } from "lucide-react";
 import { Header } from "@/shared/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
@@ -37,9 +37,7 @@ export function DashboardPage() {
   const statCards = [
     { label: "今日の着信数", value: today.totalCalls, icon: Phone, color: "text-blue-600", bg: "bg-blue-50" },
     { label: "AI対応完了", value: today.aiResolved, icon: CheckCircle, color: "text-green-600", bg: "bg-green-50" },
-    { label: "人間転送", value: today.transferred, icon: ArrowRightLeft, color: "text-orange-600", bg: "bg-orange-50" },
-    { label: "折り返し依頼", value: today.callbackRequested, icon: PhoneCall, color: "text-purple-600", bg: "bg-purple-50" },
-    { label: "未対応", value: today.unhandled, icon: AlertCircle, color: "text-red-600", bg: "bg-red-50" },
+    { label: "転送", value: today.transferred, icon: ArrowRightLeft, color: "text-orange-600", bg: "bg-orange-50" },
   ];
 
   return (
@@ -48,7 +46,7 @@ export function DashboardPage() {
       <main className="flex-1 p-6 space-y-6">
         {loading && <p className="text-sm text-gray-400">読み込み中...</p>}
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {statCards.map((card) => (
             <Card key={card.label}>
               <CardContent className="p-5">
