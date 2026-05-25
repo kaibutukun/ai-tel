@@ -24,7 +24,6 @@ export type DevCallEvent =
       flowId: string | null;
       phoneNumberId: string | null;
     }
-  | { type: "text_delta"; text: string }
   | { type: "user_transcript"; text: string }
   | { type: "assistant_transcript_done"; text: string }
   | { type: "function_call"; callId: string; name: string; arguments: string }

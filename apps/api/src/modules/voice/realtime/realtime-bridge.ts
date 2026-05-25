@@ -78,7 +78,6 @@ export interface BridgeDeps {
 }
 
 export type BridgeObserverEvent =
-  | { type: "text_delta"; text: string }
   | { type: "user_transcript"; text: string }
   | { type: "assistant_transcript_done"; text: string }
   | { type: "function_call"; callId: string; name: string; arguments: string }
@@ -166,6 +165,7 @@ export class RealtimeBridge {
    */
   private currentResponseAudioBytes = 0;
   private currentResponseStartedAt = 0;
+  private currentResponseSuppressedAudioDeltas = 0;
 
   constructor(
     private readonly cpaasWs: WebSocket,
@@ -374,6 +374,7 @@ export class RealtimeBridge {
       // 適用されるまでのラグ中に届く delta を確実にドロップする。
       if (this.userSpeaking) {
         this.suppressedAudioDeltas += 1;
+        this.currentResponseSuppressedAudioDeltas += 1;
         return;
       }
       this.lastAssistantAudioAt = Date.now();
@@ -385,7 +386,6 @@ export class RealtimeBridge {
 
     client.on("textDelta", (text) => {
       this.assistantTextBuffer += text;
-      this.emitObserverEvent({ type: "text_delta", text });
     });
 
     client.on("responseCreated", () => {
@@ -394,16 +394,12 @@ export class RealtimeBridge {
       // 音声排出待ち計算用の累計をリセット
       this.currentResponseAudioBytes = 0;
       this.currentResponseStartedAt = Date.now();
+      this.currentResponseSuppressedAudioDeltas = 0;
       this.logger.log(`${this.tag} ▷ response.created (AI 応答生成開始)`);
     });
 
     client.on("responseTranscriptDone", (transcript) => {
-      this.logger.log(`${this.tag} 🤖 AI: ${transcript}`);
-      this.emitObserverEvent({
-        type: "assistant_transcript_done",
-        text: transcript,
-      });
-      void this.persistTranscript("AI", transcript);
+      this.assistantTextBuffer = transcript;
     });
 
     client.on("responseDone", (event) => {
@@ -413,11 +409,7 @@ export class RealtimeBridge {
       const statusDetails = r?.status_details
         ? JSON.stringify(r.status_details)
         : null;
-      if (this.assistantTextBuffer.trim()) {
-        this.logger.log(
-          `${this.tag} 🤖 AI(buffered): ${this.assistantTextBuffer.trim()}`
-        );
-      }
+      const assistantTranscript = this.assistantTextBuffer.trim();
       this.assistantTextBuffer = "";
       this.logger.log(
         `${this.tag} ◁ response.done status=${status} usage=${usage}` +
@@ -427,6 +419,28 @@ export class RealtimeBridge {
         this.logger.warn(
           `${this.tag} ⚠ response.status=${status} → 応答が完了していない可能性`
         );
+      }
+      if (
+        status === "completed" &&
+        assistantTranscript &&
+        this.currentResponseAudioBytes > 0 &&
+        this.currentResponseSuppressedAudioDeltas === 0
+      ) {
+        const audioDurationMs = this.currentResponseAudioBytes / 48;
+        const elapsedMs =
+          this.currentResponseStartedAt > 0
+            ? Date.now() - this.currentResponseStartedAt
+            : audioDurationMs;
+        const waitMs = Math.max(0, audioDurationMs - elapsedMs);
+        setTimeout(() => {
+          if (this.closed) return;
+          this.logger.log(`${this.tag} 🤖 AI: ${assistantTranscript}`);
+          this.emitObserverEvent({
+            type: "assistant_transcript_done",
+            text: assistantTranscript,
+          });
+          void this.persistTranscript("AI", assistantTranscript);
+        }, waitMs);
       }
       // request_end_call が予約されている場合、最終発話 (お礼) が完了したと判断
       // できるこのタイミングで、音声バッファ flush 用に少しだけ猶予を取って shutdown。

@@ -75,26 +75,6 @@ export function useDevCall() {
     setLogs((prev) => [...prev, makeLog(kind, message)]);
   }, []);
 
-  const appendAssistantDelta = useCallback((text: string) => {
-    setLogs((prev) => {
-      const last = prev[prev.length - 1];
-      if (last?.kind === "assistant") {
-        return [...prev.slice(0, -1), { ...last, message: `${last.message}${text}` }];
-      }
-      return [...prev, makeLog("assistant", text)];
-    });
-  }, []);
-
-  const replaceLatestAssistant = useCallback((text: string) => {
-    setLogs((prev) => {
-      const last = prev[prev.length - 1];
-      if (last?.kind === "assistant") {
-        return [...prev.slice(0, -1), { ...last, message: text }];
-      }
-      return [...prev, makeLog("assistant", text)];
-    });
-  }, []);
-
   const cleanupCall = useCallback(() => {
     audioGateOpenRef.current = false;
     cleanupAudioCapture();
@@ -115,11 +95,8 @@ export function useDevCall() {
           audioGateOpenRef.current = true;
           appendLog("system", `テスト通話を開始しました: ${event.providerCallId}`);
           break;
-        case "text_delta":
-          appendAssistantDelta(event.text);
-          break;
         case "assistant_transcript_done":
-          replaceLatestAssistant(event.text);
+          appendLog("assistant", event.text);
           break;
         case "user_transcript":
           appendLog("user", event.text);
@@ -149,7 +126,7 @@ export function useDevCall() {
           break;
       }
     },
-    [appendAssistantDelta, appendLog, cleanupCall, replaceLatestAssistant]
+    [appendLog, cleanupCall]
   );
 
   const startCall = useCallback(async () => {
