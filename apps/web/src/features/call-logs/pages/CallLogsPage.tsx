@@ -6,8 +6,20 @@ import { Phone } from "lucide-react";
 import { Header } from "@/shared/layout/header";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { Input } from "@/shared/ui/input";
+import { Label } from "@/shared/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/shared/ui/select";
 import { callSessionsApi, type CallSession } from "@/entities/call-session/api/call-sessions-api";
+import { callFlowsApi, type CallFlow } from "@/entities/call-flow/api/call-flows-api";
 import { getCompanyId } from "@/shared/auth/company";
+
+const ALL_FLOWS = "__all__";
 
 const resultConfig: Record<string, { label: string; variant: "success" | "warning" | "destructive" | "secondary" | "info" }> = {
   AI_RESOLVED: { label: "AI解決", variant: "success" },
@@ -32,29 +44,96 @@ function formatDate(iso: string): string {
 
 export function CallLogsPage() {
   const [logs, setLogs] = useState<CallSession[]>([]);
-  const [total, setTotal] = useState(0);
+  const [flows, setFlows] = useState<CallFlow[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [callFlowId, setCallFlowId] = useState<string>(ALL_FLOWS);
+  const [from, setFrom] = useState<string>("");
+  const [to, setTo] = useState<string>("");
 
   const fetchLogs = useCallback(async () => {
     const companyId = getCompanyId();
     if (!companyId) return;
+    setLoading(true);
     try {
-      const res = await callSessionsApi.list(companyId);
+      const res = await callSessionsApi.list(companyId, {
+        callFlowId: callFlowId === ALL_FLOWS ? undefined : callFlowId,
+        from: from ? new Date(from).toISOString() : undefined,
+        to: to ? new Date(`${to}T23:59:59`).toISOString() : undefined,
+      });
       setLogs(res.data);
-      setTotal(res.meta.total);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [callFlowId, from, to]);
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
+
+  useEffect(() => {
+    const companyId = getCompanyId();
+    if (!companyId) return;
+    callFlowsApi.list(companyId)
+      .then((res) => setFlows(res.data))
+      .catch(() => {});
+  }, []);
+
+  const resetFilters = () => {
+    setCallFlowId(ALL_FLOWS);
+    setFrom("");
+    setTo("");
+  };
+
+  const hasFilters = callFlowId !== ALL_FLOWS || from !== "" || to !== "";
 
   return (
     <>
       <Header title="通話ログ" />
       <main className="flex-1 p-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-gray-500">直近の通話: {loading ? "—" : `${total} 件`}</p>
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-4 items-end">
+            <div className="space-y-1">
+              <Label htmlFor="filter-flow" className="text-xs text-gray-500">対応フロー</Label>
+              <Select value={callFlowId} onValueChange={setCallFlowId}>
+                <SelectTrigger id="filter-flow">
+                  <SelectValue placeholder="すべて" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_FLOWS}>すべて</SelectItem>
+                  {flows.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="filter-from" className="text-xs text-gray-500">開始日</Label>
+              <Input
+                id="filter-from"
+                type="date"
+                value={from}
+                max={to || undefined}
+                onChange={(e) => setFrom(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="filter-to" className="text-xs text-gray-500">終了日</Label>
+              <Input
+                id="filter-to"
+                type="date"
+                value={to}
+                min={from || undefined}
+                onChange={(e) => setTo(e.target.value)}
+              />
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetFilters}
+              disabled={!hasFilters}
+            >
+              リセット
+            </Button>
+          </div>
         </div>
 
         {loading && <p className="text-sm text-gray-400 py-8 text-center">読み込み中...</p>}

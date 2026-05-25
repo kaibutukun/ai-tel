@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../../../database/prisma.service";
 
 @Injectable()
@@ -7,14 +7,32 @@ export class CallSessionsService {
 
   /**
    * 通話ログ一覧（コアロジックで書き込まれたデータを読み取るのみ）
-   * ページネーション対応: page/limit クエリ
+   * ページネーション + フロー / 期間で絞り込み可能
    */
-  async findAll(companyId: string, page = 1, limit = 20) {
+  async findAll(
+    companyId: string,
+    options: {
+      page?: number;
+      limit?: number;
+      callFlowId?: string;
+      from?: string;
+      to?: string;
+    } = {}
+  ) {
+    const page = options.page ?? 1;
+    const limit = options.limit ?? 20;
     const skip = (page - 1) * limit;
+
+    const startedAt = this.buildDateRange(options.from, options.to);
+    const where = {
+      companyId,
+      ...(options.callFlowId ? { callFlowId: options.callFlowId } : {}),
+      ...(startedAt ? { startedAt } : {}),
+    };
 
     const [sessions, total] = await Promise.all([
       this.prisma.callSession.findMany({
-        where: { companyId },
+        where,
         include: {
           phoneNumber: { select: { number: true, displayName: true } },
           callFlow: { select: { name: true } },
@@ -23,12 +41,28 @@ export class CallSessionsService {
         skip,
         take: limit,
       }),
-      this.prisma.callSession.count({ where: { companyId } }),
+      this.prisma.callSession.count({ where }),
     ]);
 
     return {
       data: sessions.map((session) => this.withDerivedDuration(session)),
       meta: { total, page, limit },
+    };
+  }
+
+  private buildDateRange(from?: string, to?: string) {
+    const gte = from ? new Date(from) : undefined;
+    const lte = to ? new Date(to) : undefined;
+    if (gte && Number.isNaN(gte.getTime())) {
+      throw new BadRequestException("from の日付形式が不正です");
+    }
+    if (lte && Number.isNaN(lte.getTime())) {
+      throw new BadRequestException("to の日付形式が不正です");
+    }
+    if (!gte && !lte) return null;
+    return {
+      ...(gte ? { gte } : {}),
+      ...(lte ? { lte } : {}),
     };
   }
 

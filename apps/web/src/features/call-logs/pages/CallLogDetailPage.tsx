@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Bot, User, Play, MessageSquare, BookOpen } from "lucide-react";
+import { ArrowLeft, Bot, User, Play, MessageSquare, BookOpen, ClipboardList } from "lucide-react";
 import { Header } from "@/shared/layout/header";
 import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
@@ -17,6 +17,16 @@ function formatDuration(seconds: number | null): string {
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("ja-JP");
+}
+
+function extractCollectedEntries(data: unknown): { key: string; value: string }[] {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+  return Object.entries(data as Record<string, unknown>)
+    .map(([key, value]) => ({
+      key,
+      value: value == null ? "" : String(value).trim(),
+    }))
+    .filter((entry) => entry.value.length > 0);
 }
 
 interface CallLogDetailPageProps {
@@ -56,6 +66,7 @@ export function CallLogDetailPage({ id }: CallLogDetailPageProps) {
   }
 
   const summary = log.summaries[0];
+  const collectedEntries = extractCollectedEntries(summary?.extractedData);
 
   return (
     <>
@@ -139,6 +150,29 @@ export function CallLogDetailPage({ id }: CallLogDetailPageProps) {
                 <CardHeader><CardTitle className="flex items-center gap-2"><Bot className="w-5 h-5" />AI要約</CardTitle></CardHeader>
                 <CardContent>
                   <p className="text-sm text-gray-700 leading-relaxed">{summary.summary}</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {collectedEntries.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <ClipboardList className="w-5 h-5" />収集した情報
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <dl className="space-y-2">
+                    {collectedEntries.map(({ key, value }) => (
+                      <div
+                        key={key}
+                        className="grid grid-cols-[7rem_1fr] gap-2 text-sm bg-gray-50 px-3 py-2 rounded-md"
+                      >
+                        <dt className="text-gray-500">{key}</dt>
+                        <dd className="text-gray-900 whitespace-pre-wrap break-words">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
                 </CardContent>
               </Card>
             )}

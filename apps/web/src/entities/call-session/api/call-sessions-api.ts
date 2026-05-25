@@ -21,9 +21,24 @@ export interface CallSessionDetail extends CallSession {
 interface ListResponse { data: CallSession[]; meta: { total: number; page: number; limit: number } }
 interface SingleResponse { data: CallSessionDetail }
 
+export interface CallSessionsListParams {
+  page?: number;
+  limit?: number;
+  callFlowId?: string;
+  from?: string;
+  to?: string;
+}
+
 export const callSessionsApi = {
-  list: (companyId: string, page = 1, limit = 20) =>
-    apiClient.get<ListResponse>(`/call-sessions?companyId=${companyId}&page=${page}&limit=${limit}`),
+  list: (companyId: string, params: CallSessionsListParams = {}) => {
+    const query = new URLSearchParams({ companyId });
+    query.set("page", String(params.page ?? 1));
+    query.set("limit", String(params.limit ?? 20));
+    if (params.callFlowId) query.set("callFlowId", params.callFlowId);
+    if (params.from) query.set("from", params.from);
+    if (params.to) query.set("to", params.to);
+    return apiClient.get<ListResponse>(`/call-sessions?${query.toString()}`);
+  },
 
   get: (id: string) =>
     apiClient.get<SingleResponse>(`/call-sessions/${id}`),
