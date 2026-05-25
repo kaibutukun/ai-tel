@@ -26,6 +26,13 @@ import {
   summarizeForLog,
 } from "./support/tool-logging";
 
+const LOG_RESET = "\x1b[0m";
+const LOG_DIM = "\x1b[2m";
+const LOG_CYAN = "\x1b[36m";
+const LOG_GREEN = "\x1b[32m";
+const LOG_BLUE = "\x1b[34m";
+const LOG_YELLOW = "\x1b[33m";
+
 // ─────────────────────────────────────────────────────────────
 // RealtimeBridge (新コア)
 //
@@ -192,14 +199,15 @@ export class RealtimeBridge {
     this.providerCallId = providerCallId ?? null;
     this.sessionClock.restart();
     this.logger.log(
-      `${this.tag} ▶ session start ` +
+      `${LOG_CYAN}${this.tag} ▶ CALL START ` +
         `companyId=${this.context.companyId} ` +
         `flowId=${this.context.callFlowId ?? "-"} ` +
-        `callSessionId=${this.context.callSessionId ?? "-"} ` +
-        `caller=${this.context.callerNumber ?? "-"}`
+        `session=${this.context.callSessionId ?? "-"} ` +
+        `caller=${this.context.callerNumber ?? "-"} ` +
+        `nodes=${Object.keys(this.compiled.nodes).length}${LOG_RESET}`
     );
-    this.logger.log(
-      `${this.tag} compiled flow: nodes=${Object.keys(this.compiled.nodes).length} ` +
+    this.logger.debug(
+      `${this.tag} realtime config ` +
         `tools=[${REALTIME_TOOLS.map((t) => t.name).join(", ")}] ` +
         `opening=${this.compiled.openingLockedMessageNodeId ? "locked" : "default"} ` +
         `faqMinScore=${this.compiled.faqMinScore} ` +
@@ -212,7 +220,7 @@ export class RealtimeBridge {
       this.attachOpenAiListeners(this.openai);
       await this.openai.connect();
       if (this.closed) return;
-      this.logger.log(`${this.tag} OpenAI WS connected`);
+      this.logger.debug(`${this.tag} OpenAI WS connected`);
 
       const voice = process.env.OPENAI_REALTIME_VOICE || "alloy";
       try {
@@ -224,7 +232,7 @@ export class RealtimeBridge {
           voice,
         });
         if (this.closed) return;
-        this.logger.log(`${this.tag} session.updated ack received (voice=${voice})`);
+        this.logger.debug(`${this.tag} session.updated ack received (voice=${voice})`);
       } catch (err) {
         this.logger.warn(
           `${this.tag} session.update ack timeout/error: ${(err as Error).message}`
@@ -265,7 +273,7 @@ export class RealtimeBridge {
       // 第一声を出すケースがあったため。フローに locked message が無くてもコンパイラが
       // DEFAULT_OPENING_MESSAGE を入れている。
       const opening = this.compiled.openingMessage;
-      this.logger.log(
+      this.logger.debug(
         `${this.tag} 🤖 OPENING (${this.compiled.openingLockedMessageNodeId ? "locked" : "default"}): ${opening}`
       );
       this.openai.sayExact(opening);
@@ -395,7 +403,7 @@ export class RealtimeBridge {
       this.currentResponseAudioBytes = 0;
       this.currentResponseStartedAt = Date.now();
       this.currentResponseSuppressedAudioDeltas = 0;
-      this.logger.log(`${this.tag} ▷ response.created (AI 応答生成開始)`);
+      this.logger.debug(`${this.tag} ▷ response.created (AI 応答生成開始)`);
     });
 
     client.on("responseTranscriptDone", (transcript) => {
@@ -411,7 +419,7 @@ export class RealtimeBridge {
         : null;
       const assistantTranscript = this.assistantTextBuffer.trim();
       this.assistantTextBuffer = "";
-      this.logger.log(
+      this.logger.debug(
         `${this.tag} ◁ response.done status=${status} usage=${usage}` +
           (statusDetails ? ` details=${statusDetails}` : "")
       );
@@ -434,7 +442,7 @@ export class RealtimeBridge {
         const waitMs = Math.max(0, audioDurationMs - elapsedMs);
         setTimeout(() => {
           if (this.closed) return;
-          this.logger.log(`${this.tag} 🤖 AI: ${assistantTranscript}`);
+          this.logger.log(`${LOG_GREEN}${this.tag} AI  ${assistantTranscript}${LOG_RESET}`);
           this.emitObserverEvent({
             type: "assistant_transcript_done",
             text: assistantTranscript,
@@ -461,7 +469,7 @@ export class RealtimeBridge {
     });
 
     client.on("userTranscript", (transcript) => {
-      this.logger.log(`${this.tag} 👤 USER: ${transcript}`);
+      this.logger.log(`${LOG_BLUE}${this.tag} USER ${transcript}${LOG_RESET}`);
       this.emitObserverEvent({ type: "user_transcript", text: transcript });
       void this.persistTranscript("USER", transcript);
       // FlowEngine 側にも直近 transcript を渡す。end_call の同意ガード等が
@@ -557,7 +565,7 @@ export class RealtimeBridge {
     });
 
     client.on("close", (code, reason) => {
-      this.logger.log(
+      this.logger.debug(
         `${this.tag} OpenAI WS closed code=${code} reason=${reason || "-"}`
       );
       this.shutdown("openai_closed");
@@ -604,7 +612,7 @@ export class RealtimeBridge {
   shutdown(reason: string) {
     if (this.closed) return;
     this.closed = true;
-    this.logger.log(`${this.tag} ■ shutdown reason=${reason}`);
+    this.logger.log(`${LOG_DIM}${this.tag} ■ CALL END reason=${reason}${LOG_RESET}`);
     this.markSessionEnded(reason);
     if (this.context.callSessionId) {
       this.deps.flowEngine.unregister(this.context.callSessionId);
@@ -650,7 +658,7 @@ export class RealtimeBridge {
     this.audioFramer.clear();
     if (!client.isResponseActive()) return;
     this.logger.log(
-      `${this.tag} AI 応答キャンセル(ユーザー割り込み: ${source})`
+      `${LOG_YELLOW}${this.tag} INTERRUPT AI response (${source})${LOG_RESET}`
     );
     client.cancelResponse();
   }
@@ -665,7 +673,7 @@ export class RealtimeBridge {
     if (this.pendingEndCallReason) return;
     this.pendingEndCallReason = reason ?? "model_end_call";
     this.logger.log(
-      `${this.tag} end_call 受領 → 最終発話完了を待ってシャットダウン (reason=${this.pendingEndCallReason})`
+      `${LOG_YELLOW}${this.tag} END requested reason=${this.pendingEndCallReason}${LOG_RESET}`
     );
     const safetyMs = 8000;
     this.pendingEndCallSafetyTimer = setTimeout(() => {
@@ -702,7 +710,7 @@ export class RealtimeBridge {
     const HARD_CAP_MS = 15000;
     const totalWait = Math.min(backlogMs + safetyTailMs, HARD_CAP_MS);
 
-    this.logger.log(
+    this.logger.debug(
       `${this.tag} end_call: drain wait=${totalWait}ms ` +
         `(audioDur=${Math.round(audioDurationMs)}ms elapsed=${elapsedMs}ms ` +
         `backlog=${Math.round(backlogMs)}ms tail=${safetyTailMs}ms)`

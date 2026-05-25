@@ -8,6 +8,10 @@ import { Logger } from "@nestjs/common";
 // 文脈の閾値等は snapshot に含まれるので、ロガーは引数だけ見れば十分。
 // ─────────────────────────────────────────────────────────────
 
+const LOG_RESET = "\x1b[0m";
+const LOG_DIM = "\x1b[2m";
+const LOG_YELLOW = "\x1b[33m";
+
 export function summarizeForLog(value: unknown): string {
   try {
     const json = JSON.stringify(value);
@@ -26,13 +30,13 @@ export function logToolNodeEntry(
 ) {
   switch (toolName) {
     case "get_flow_state":
-      logger.log(`${tag} 🧭 [脳→Backend] get_flow_state`);
+      logger.log(`${LOG_YELLOW}${tag} TOOL → get_flow_state${LOG_RESET}`);
       return;
     case "update_collected_info": {
       const slots = (args.slots as Record<string, unknown>) ?? {};
       const keys = Object.keys(slots);
       logger.log(
-        `${tag} 📝 [脳→Backend] update_collected_info slots={${keys.join(", ")}}`
+        `${LOG_YELLOW}${tag} TOOL → update_collected_info slots={${keys.join(", ")}}${LOG_RESET}`
       );
       return;
     }
@@ -40,18 +44,18 @@ export function logToolNodeEntry(
       const target = String(args.target_node_id ?? args.targetNodeId ?? "");
       const reason = args.reason ? String(args.reason) : "-";
       logger.log(
-        `${tag} ➡ [脳→Backend] move_to_node target=${target} reason=${clip(reason, 80)}`
+        `${LOG_YELLOW}${tag} TOOL → move_to_node target=${target} reason=${clip(reason, 80)}${LOG_RESET}`
       );
       return;
     }
     case "search_faq": {
       const query = String(args.query ?? "");
-      logger.log(`${tag} ❓ [脳→Backend] search_faq query="${clip(query, 120)}"`);
+      logger.log(`${LOG_YELLOW}${tag} TOOL → search_faq query="${clip(query, 120)}"${LOG_RESET}`);
       return;
     }
     case "search_documents": {
       const query = String(args.query ?? "");
-      logger.log(`${tag} 📚 [脳→Backend] search_documents query="${clip(query, 120)}"`);
+      logger.log(`${LOG_YELLOW}${tag} TOOL → search_documents query="${clip(query, 120)}"${LOG_RESET}`);
       return;
     }
     case "send_notification": {
@@ -59,8 +63,8 @@ export function logToolNodeEntry(
       const subject = args.subject ? String(args.subject) : "(件名なし)";
       const bodyLen = String(args.body ?? "").length;
       logger.log(
-        `${tag} 📨 [脳→Backend] send_notification target=${target} ` +
-          `subject="${clip(subject, 80)}" bodyLen=${bodyLen}`
+        `${LOG_YELLOW}${tag} TOOL → send_notification target=${target} ` +
+          `subject="${clip(subject, 80)}" bodyLen=${bodyLen}${LOG_RESET}`
       );
       return;
     }
@@ -68,17 +72,17 @@ export function logToolNodeEntry(
       const to = args.to ? String(args.to) : "(既定値)";
       const reason = args.reason ? String(args.reason) : "-";
       logger.log(
-        `${tag} 📞 [脳→Backend] request_transfer to=${to} reason=${clip(reason, 80)}`
+        `${LOG_YELLOW}${tag} TOOL → request_transfer to=${to} reason=${clip(reason, 80)}${LOG_RESET}`
       );
       return;
     }
     case "request_end_call": {
       const reason = args.reason ? String(args.reason) : "-";
-      logger.log(`${tag} 🏁 [脳→Backend] request_end_call reason=${clip(reason, 80)}`);
+      logger.log(`${LOG_YELLOW}${tag} TOOL → request_end_call reason=${clip(reason, 80)}${LOG_RESET}`);
       return;
     }
     default:
-      logger.log(`${tag} 🛠 [脳→Backend 未知ツール] ${toolName} args=${summarizeForLog(args)}`);
+      logger.log(`${LOG_YELLOW}${tag} TOOL → ${toolName} args=${summarizeForLog(args)}${LOG_RESET}`);
   }
 }
 
@@ -104,7 +108,7 @@ export function logToolNodeResult(
   switch (toolName) {
     case "get_flow_state":
       logger.log(
-        `${tag} 🧭 [Backend→脳] get_flow_state ${okMark} (${elapsedMs}ms)${currentNodeSummary}`
+        `${LOG_YELLOW}${tag} TOOL ← get_flow_state ${okMark} (${elapsedMs}ms)${currentNodeSummary}${LOG_RESET}`
       );
       return;
     case "update_collected_info": {
@@ -115,16 +119,16 @@ export function logToolNodeResult(
       const entries = accepted ? Object.entries(accepted) : [];
       const summary = entries.map(([k, v]) => `${k}=${clip(String(v), 40)}`).join(", ");
       logger.log(
-        `${tag} 📝 [Backend→脳] update_collected_info ${okMark} (${elapsedMs}ms) ${summary || "(空)"}` +
+        `${LOG_YELLOW}${tag} TOOL ← update_collected_info ${okMark} (${elapsedMs}ms) ${summary || "(空)"}` +
           (missing.length > 0 ? ` missing={${missing.join(", ")}}` : "") +
-          currentNodeSummary
+          `${currentNodeSummary}${LOG_RESET}`
       );
       return;
     }
     case "move_to_node": {
       const message = out.message ? ` message="${clip(String(out.message), 120)}"` : "";
       logger.log(
-        `${tag} ➡ [Backend→脳] move_to_node ${okMark} (${elapsedMs}ms)${currentNodeSummary}${message}`
+        `${LOG_YELLOW}${tag} TOOL ← move_to_node ${okMark} (${elapsedMs}ms)${currentNodeSummary}${message}${LOG_RESET}`
       );
       return;
     }
@@ -135,10 +139,9 @@ export function logToolNodeResult(
         : [];
       const top = sources[0];
       const answer = typeof out.answer === "string" ? out.answer : "";
-      const icon = toolName === "search_documents" ? "📚" : "❓";
       if (sources.length === 0) {
         logger.warn(
-          `${tag} ${icon} [Backend→脳] ${toolName} ${okMark} hits=0 (${elapsedMs}ms)`
+          `${LOG_YELLOW}${tag} TOOL ← ${toolName} ${okMark} hits=0 (${elapsedMs}ms)${LOG_RESET}`
         );
       } else {
         const sourcesSummary =
@@ -150,33 +153,33 @@ export function logToolNodeResult(
             )
             .join(", ") + (sources.length > 3 ? `, +${sources.length - 3}件` : "");
         logger.log(
-          `${tag} ${icon} [Backend→脳] ${toolName} ${okMark} hits=${sources.length} ` +
-            `topScore=${top?.score?.toFixed(3) ?? "?"} (${elapsedMs}ms)`
+          `${LOG_YELLOW}${tag} TOOL ← ${toolName} ${okMark} hits=${sources.length} ` +
+            `topScore=${top?.score?.toFixed(3) ?? "?"} (${elapsedMs}ms)${LOG_RESET}`
         );
-        logger.log(`${tag}    sources=${sourcesSummary}`);
-        if (answer) logger.log(`${tag}    answer="${clip(answer, 200)}"`);
+        logger.debug(`${LOG_DIM}${tag} sources=${sourcesSummary}${LOG_RESET}`);
+        if (answer) logger.debug(`${LOG_DIM}${tag} answer="${clip(answer, 200)}"${LOG_RESET}`);
       }
       return;
     }
     case "send_notification":
       logger.log(
-        `${tag} 📨 [Backend→脳] send_notification ${okMark} (${elapsedMs}ms) target=${String(out.target ?? "-")}`
+        `${LOG_YELLOW}${tag} TOOL ← send_notification ${okMark} (${elapsedMs}ms) target=${String(out.target ?? "-")}${LOG_RESET}`
       );
       return;
     case "request_transfer":
       logger.log(
-        `${tag} 📞 [Backend→脳] request_transfer ${okMark} (${elapsedMs}ms) to=${String(out.to ?? "-")}` +
-          (out.error ? ` error=${String(out.error)}` : "")
+        `${LOG_YELLOW}${tag} TOOL ← request_transfer ${okMark} (${elapsedMs}ms) to=${String(out.to ?? "-")}` +
+          `${out.error ? ` error=${String(out.error)}` : ""}${LOG_RESET}`
       );
       return;
     case "request_end_call":
       logger.log(
-        `${tag} 🏁 [Backend→脳] request_end_call ${okMark} (${elapsedMs}ms)`
+        `${LOG_YELLOW}${tag} TOOL ← request_end_call ${okMark} (${elapsedMs}ms)${LOG_RESET}`
       );
       return;
     default:
       logger.log(
-        `${tag} 🛠 [Backend→脳 未知ツール] ${toolName} ${okMark} (${elapsedMs}ms) ${summarizeForLog(output)}`
+        `${LOG_YELLOW}${tag} TOOL ← ${toolName} ${okMark} (${elapsedMs}ms) ${summarizeForLog(output)}${LOG_RESET}`
       );
   }
 }

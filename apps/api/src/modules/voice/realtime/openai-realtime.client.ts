@@ -368,7 +368,7 @@ export class OpenAIRealtimeClient {
         // session 適用前に届いた入力音声を、正しいフォーマット設定下で OpenAI に流す
         const flushed = this.pendingInputAudio.splice(0);
         if (flushed.length > 0) {
-          this.logger.log(
+          this.logger.debug(
             `Flushing ${flushed.length} buffered input audio chunks after session.updated`
           );
           for (const audio of flushed) {

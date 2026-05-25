@@ -144,7 +144,7 @@ export class FlowRuntimeCompilerService {
           n.type !== "end"
       )
       .map((n) => n.id);
-    this.logger.log(
+    this.logger.debug(
       `flow structure: nodes=${graph.nodes.length} edges=${graph.edges.length} ` +
         `counts=${JSON.stringify(counts)} ` +
         `startNodeId=${compiled.startNodeId ?? "-"} ` +

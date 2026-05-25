@@ -67,7 +67,7 @@ export class FlowEngineService {
       status: "active",
     };
     this.sessions.set(input.callSessionId, session);
-    this.logger.log(
+    this.logger.debug(
       `register session=${input.callSessionId} initialNode=${initialNodeId ?? "-"} ` +
         `nodes=${Object.keys(input.compiled.nodes).length}`
     );
@@ -184,7 +184,7 @@ export class FlowEngineService {
       session.visitedNodeIds.push(targetNodeId);
     }
 
-    this.logger.log(
+    this.logger.debug(
       `move session=${callSessionId} ${current.id} → ${targetNodeId} ` +
         `reason=${reason ?? "-"}`
     );

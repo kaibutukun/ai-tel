@@ -9,7 +9,7 @@ import { RealtimeService } from "./modules/voice/realtime/realtime.service";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
-    logger: ["error", "warn", "log", "debug"],
+    logger: ["error", "warn", "log"],
   });
 
   app.setGlobalPrefix("api");

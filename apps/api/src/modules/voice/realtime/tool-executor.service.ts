@@ -261,7 +261,7 @@ export class ToolExecutorService {
     const subject =
       typeof args.subject === "string" ? args.subject : "AI通話: 通知";
 
-    this.logger.log(
+    this.logger.debug(
       `notification target=${target || "(none)"} subject=${subject} bodyLength=${body.length}`
     );
 
@@ -309,7 +309,7 @@ export class ToolExecutorService {
       return this.failure(ctx, "転送先が設定されていません");
     }
 
-    this.logger.log(`request_transfer to=${to} reason=${reason ?? "-"}`);
+    this.logger.debug(`request_transfer to=${to} reason=${reason ?? "-"}`);
     return {
       output: {
         ok: true,

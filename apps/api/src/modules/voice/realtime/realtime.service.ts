@@ -55,7 +55,7 @@ export class RealtimeService implements OnApplicationShutdown {
 
     httpServer.on("upgrade", (req, socket, head) => {
       const url = req.url ?? "";
-      this.logger.log(`WS upgrade attempt: url=${url} host=${req.headers.host} ua=${req.headers["user-agent"] ?? "(none)"}`);
+      this.logger.debug(`WS upgrade attempt: url=${url} host=${req.headers.host} ua=${req.headers["user-agent"] ?? "(none)"}`);
       const isCpaasStream = url.startsWith(MEDIA_STREAM_PATH);
       const isDevStream = url.startsWith(DEV_MEDIA_STREAM_PATH);
       if (!isCpaasStream && !isDevStream) {
@@ -69,13 +69,13 @@ export class RealtimeService implements OnApplicationShutdown {
       }
 
       this.wss!.handleUpgrade(req, socket, head, (ws) => {
-        this.logger.log(`WS upgrade completed for ${url}`);
+        this.logger.debug(`WS upgrade completed for ${url}`);
         this.wss!.emit("connection", ws, req);
       });
     });
 
     this.wss.on("connection", (ws, req) => {
-      this.logger.log(`WS connection received: url=${req.url}`);
+      this.logger.debug(`WS connection received: url=${req.url}`);
       const handler = (req.url ?? "").startsWith(DEV_MEDIA_STREAM_PATH)
         ? this.handleDevConnection(ws, req)
         : this.handleConnection(ws, req);
@@ -89,12 +89,12 @@ export class RealtimeService implements OnApplicationShutdown {
       });
     });
 
-    this.logger.log(
+    this.logger.debug(
       `NTT CPaaS media stream WS endpoint: ${MEDIA_STREAM_PATH} ` +
       `(${NTT_CPAAS_REALTIME_AUDIO.sampleRate}Hz/${NTT_CPAAS_REALTIME_AUDIO.frameBytes} bytes)`
     );
     if (process.env.NODE_ENV !== "production") {
-      this.logger.log(`Dev browser call WS endpoint: ${DEV_MEDIA_STREAM_PATH}`);
+      this.logger.debug(`Dev browser call WS endpoint: ${DEV_MEDIA_STREAM_PATH}`);
     }
   }
 
@@ -196,10 +196,10 @@ export class RealtimeService implements OnApplicationShutdown {
     }
 
     const start = await this.waitForDevStart(ws);
-    this.logger.log(
+    this.logger.debug(
       `Dev call OPENAI_API_KEY source=${process.env.API_ENV_FILE_LOADED_FROM ?? "process.env"} key=${this.maskSecret(apiKey)}`
     );
-    this.logger.log(
+    this.logger.debug(
       `Dev call start payload: companyId=${start.companyId ?? "-"} ` +
         `flowId=${start.flowId ?? "-"} phoneNumberId=${start.phoneNumberId ?? "-"} ` +
         `caller=${start.callerNumber ?? "-"}`
@@ -240,7 +240,7 @@ export class RealtimeService implements OnApplicationShutdown {
       });
       if (flow) {
         compiled = this.compiler.compile(flow.flowJson, flow.name);
-        this.logger.log(
+        this.logger.debug(
           `Dev call using flow: id=${flow.id} name="${flow.name}" ` +
             `nodes=${this.countFlowNodes(flow.flowJson)}`
         );
@@ -420,7 +420,7 @@ export class RealtimeService implements OnApplicationShutdown {
       }
     }
     for (const bridge of stale) {
-      this.logger.log(
+      this.logger.debug(
         `Dev call: shutting down stale bridge companyId=${companyId} (new call superseding)`
       );
       try {
