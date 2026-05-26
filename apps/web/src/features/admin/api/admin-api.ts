@@ -59,6 +59,34 @@ export interface AdminCompanyPlanUpdate {
   trialEndsAt: string | null;
 }
 
+export interface AdminCreateCompanyInput {
+  name: string;
+  adminEmail: string;
+  adminName: string;
+  planType: AdminPlanType;
+  monthlyPrice: number;
+  maxMinutesPerMonth: number;
+  trialEndsAt: string | null;
+}
+
+export interface AdminInvitationInfo {
+  token: string;
+  url: string;
+  expiresAt: string;
+}
+
+export interface AdminCreateCompanyResponse {
+  data: {
+    company: { id: string; name: string; slug: string };
+    admin: { id: string; email: string; name: string };
+    invitation: AdminInvitationInfo;
+  };
+}
+
+export interface AdminResendInvitationResponse {
+  data: { invitation: AdminInvitationInfo };
+}
+
 export interface AdminCallSession {
   id: string;
   companyId: string;
@@ -109,6 +137,9 @@ export const adminApi = {
   listCompanies: () =>
     apiClient.get<ListResponse>("/admin/companies"),
 
+  createCompany: (data: AdminCreateCompanyInput) =>
+    apiClient.post<AdminCreateCompanyResponse>("/admin/companies", data),
+
   getCompany: (id: string) =>
     apiClient.get<SingleResponse>(`/admin/companies/${id}`),
 
@@ -118,6 +149,13 @@ export const adminApi = {
   /** 企業ごとのプラン設定（種別・料金・上限・トライアル期限）を上書き */
   updateCompanyPlan: (id: string, data: AdminCompanyPlanUpdate) =>
     apiClient.put<SingleResponse>(`/admin/companies/${id}/plan`, data),
+
+  /** 指定メンバー宛の招待リンクを再発行 */
+  resendInvitation: (companyId: string, memberId: string) =>
+    apiClient.post<AdminResendInvitationResponse>(
+      `/admin/companies/${companyId}/members/${memberId}/invitations`,
+      {}
+    ),
 
   listPhoneNumbers: () =>
     apiClient.get<PhoneNumberListResponse>("/admin/phone-numbers"),

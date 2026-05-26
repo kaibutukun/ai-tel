@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { Building2 } from "lucide-react";
+import { Building2, Plus } from "lucide-react";
 import { Header } from "@/shared/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
-import { adminApi, type AdminCompany } from "@/features/admin/api/admin-api";
+import { adminApi, type AdminCompany, type AdminInvitationInfo } from "@/features/admin/api/admin-api";
+import { CreateCompanyModal } from "@/features/admin/components/CreateCompanyModal";
+import { InvitationLinkDialog } from "@/features/admin/components/InvitationLinkDialog";
 
 const planVariants: Record<string, "default" | "secondary" | "outline" | "info" | "success"> = {
   TRIAL: "secondary",
@@ -22,6 +24,12 @@ const planLabels: Record<string, string> = {
 export function AdminCompaniesPage() {
   const [companies, setCompanies] = useState<AdminCompany[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [invitationResult, setInvitationResult] = useState<{
+    info: AdminInvitationInfo;
+    companyName: string;
+    adminEmail: string;
+  } | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -38,6 +46,15 @@ export function AdminCompaniesPage() {
     <>
       <Header title="企業管理" />
       <main className="flex-1 w-full space-y-4 p-4 sm:space-y-6 sm:p-6">
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-gray-500">
+            企業数: {loading ? "—" : `${companies.length}社`}
+          </p>
+          <Button onClick={() => setShowCreate(true)}>
+            <Plus className="mr-2 h-4 w-4" />企業を作成
+          </Button>
+        </div>
+
         {loading && <p className="text-sm text-gray-400">読み込み中...</p>}
 
         <Card>
@@ -104,6 +121,27 @@ export function AdminCompaniesPage() {
           </CardContent>
         </Card>
       </main>
+
+      {showCreate && (
+        <CreateCompanyModal
+          onClose={() => setShowCreate(false)}
+          onCreated={({ invitation, companyName, adminEmail }) => {
+            setShowCreate(false);
+            setInvitationResult({ info: invitation, companyName, adminEmail });
+            fetchData();
+          }}
+        />
+      )}
+
+      {invitationResult && (
+        <InvitationLinkDialog
+          title={`${invitationResult.companyName} を作成しました`}
+          description={`${invitationResult.adminEmail} の管理者向け招待URLです。本人に渡してパスワードを設定してもらってください。`}
+          url={invitationResult.info.url}
+          expiresAt={invitationResult.info.expiresAt}
+          onClose={() => setInvitationResult(null)}
+        />
+      )}
     </>
   );
 }

@@ -2,13 +2,16 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 /** 認証不要なパス（前方一致） */
-const PUBLIC_PATHS = ["/login"];
+const PUBLIC_PATHS = ["/login", "/invite"];
+/** ログイン済みのときダッシュボードへリダイレクトするパス（前方一致） */
+const REDIRECT_IF_AUTHED = ["/login"];
 
 /**
  * Next.js エッジミドルウェア
  *
- * - auth_token Cookie が存在しない場合は /login へリダイレクト
- * - ログイン済みで /login にアクセスした場合は /dashboard へリダイレクト
+ * - 公開パス以外で auth_token Cookie が無ければ /login へリダイレクト
+ * - /login にログイン済みでアクセスした場合は /dashboard へ
+ * - /invite は招待リンクなのでログイン済みでも素通り（accept 時にトークン上書き）
  */
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -18,14 +21,16 @@ export function middleware(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`)
   );
+  const redirectIfAuthed = REDIRECT_IF_AUTHED.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`)
+  );
 
   if (isPublic) {
-    // ログイン済みならダッシュボードへ
-    if (hasValidToken) {
+    if (hasValidToken && redirectIfAuthed) {
       return NextResponse.redirect(new URL("/dashboard", request.url));
     }
     const response = NextResponse.next();
-    if (token) response.cookies.delete("auth_token");
+    if (token && !hasValidToken) response.cookies.delete("auth_token");
     return response;
   }
 

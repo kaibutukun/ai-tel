@@ -2,11 +2,14 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { PrismaService } from "../../../database/prisma.service";
+import { InvitationsService } from "../../identity/invitations/invitations.service";
 import { CreateMemberDto } from "./dto/create-member.dto";
 import { UpdateMemberRoleDto } from "./dto/update-member-role.dto";
+import { JwtPayload } from "../../../common/types/authenticated-request";
 
 // DB から取得した CompanyMember+User を API レスポンス形式に整形
 function formatMember(m: {
@@ -29,7 +32,10 @@ function formatMember(m: {
 
 @Injectable()
 export class MembersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly invitations: InvitationsService
+  ) {}
 
   /** 指定会社のメンバー一覧を取得 */
   async findAll(companyId: string) {
@@ -47,53 +53,83 @@ export class MembersService {
 
   /**
    * メンバーを招待する
-   * - 既存ユーザーならそのまま追加、新規ならユーザーレコードを作成してから追加
-   * - 既にメンバーの場合は 409 を返す
+   * - 呼び出し元が招待先企業の ADMIN でなければ 403
+   * - 同じ会社の既存メンバーなら 409
+   * - 他企業のメンバーになっている email なら 409（1ユーザー=1企業の方針）
    */
-  async invite(dto: CreateMemberDto) {
-    // メールアドレスでユーザーを検索、なければ新規作成
-    let user = await this.prisma.user.findUnique({
+  async invite(
+    dto: CreateMemberDto,
+    requester: JwtPayload,
+    origin: string | undefined
+  ) {
+    this.ensureCompanyAdmin(requester, dto.companyId);
+
+    const existing = await this.prisma.user.findUnique({
       where: { email: dto.email },
+      include: { companyMembers: true },
     });
-    if (!user) {
-      user = await this.prisma.user.create({
-        data: { email: dto.email, name: dto.name },
-      });
+
+    if (existing) {
+      const sameCompany = existing.companyMembers.find(
+        (m) => m.companyId === dto.companyId
+      );
+      if (sameCompany) {
+        throw new ConflictException(
+          "このメールアドレスは既にこの会社のメンバーです"
+        );
+      }
+      if (existing.companyMembers.length > 0) {
+        throw new ConflictException(
+          "このメールアドレスは既に別企業のメンバーです"
+        );
+      }
     }
 
-    // 既にメンバー登録済みか確認
-    const existing = await this.prisma.companyMember.findUnique({
-      where: {
-        companyId_userId: { companyId: dto.companyId, userId: user.id },
-      },
-    });
-    if (existing) {
-      throw new ConflictException(
-        "このメールアドレスは既にメンバーとして登録されています"
-      );
-    }
+    const user =
+      existing ??
+      (await this.prisma.user.create({
+        data: { email: dto.email, name: dto.name },
+      }));
 
     const member = await this.prisma.companyMember.create({
       data: {
         companyId: dto.companyId,
         userId: user.id,
         role: dto.role as Role,
-        joinedAt: new Date(),
+        joinedAt: null,
       },
       include: { user: true },
     });
 
-    return { data: formatMember(member) };
+    const invitation = await this.invitations.issue(
+      user.id,
+      dto.companyId,
+      dto.role as Role
+    );
+
+    return {
+      data: formatMember(member),
+      invitation: {
+        token: invitation.token,
+        url: this.invitations.buildInvitationUrl(invitation.token, origin),
+        expiresAt: invitation.expiresAt.toISOString(),
+      },
+    };
   }
 
-  /** メンバーのロールを変更する */
-  async updateRole(memberId: string, dto: UpdateMemberRoleDto) {
+  /** メンバーのロールを変更する（呼び出し元が同企業の ADMIN である必要あり） */
+  async updateRole(
+    memberId: string,
+    dto: UpdateMemberRoleDto,
+    requester: JwtPayload
+  ) {
     const member = await this.prisma.companyMember.findUnique({
       where: { id: memberId },
     });
     if (!member) {
       throw new NotFoundException("メンバーが見つかりません");
     }
+    this.ensureCompanyAdmin(requester, member.companyId);
 
     const updated = await this.prisma.companyMember.update({
       where: { id: memberId },
@@ -104,16 +140,78 @@ export class MembersService {
     return { data: formatMember(updated) };
   }
 
-  /** メンバーを削除する（CompanyMember レコードのみ削除、User は残す） */
-  async remove(memberId: string) {
+  /**
+   * メンバーを削除する（CompanyMember レコードのみ削除、User は残す）
+   * - 呼び出し元が同企業の ADMIN でなければ 403
+   * - 自分自身を削除しようとした場合は 400
+   */
+  async remove(memberId: string, requester: JwtPayload) {
     const member = await this.prisma.companyMember.findUnique({
       where: { id: memberId },
     });
     if (!member) {
       throw new NotFoundException("メンバーが見つかりません");
     }
+    this.ensureCompanyAdmin(requester, member.companyId);
+
+    if (member.userId === requester.sub) {
+      throw new ForbiddenException("自分自身を削除することはできません");
+    }
 
     await this.prisma.companyMember.delete({ where: { id: memberId } });
     return { data: { message: "メンバーを削除しました" } };
+  }
+
+  /**
+   * 既存メンバーへの招待リンクを再発行する。
+   * - 呼び出し元が同企業の ADMIN でなければ 403
+   * - passwordHash 設定済みなら 409
+   */
+  async resendInvitation(
+    memberId: string,
+    requester: JwtPayload,
+    origin: string | undefined
+  ) {
+    const member = await this.prisma.companyMember.findUnique({
+      where: { id: memberId },
+      include: { user: true },
+    });
+    if (!member) {
+      throw new NotFoundException("メンバーが見つかりません");
+    }
+    this.ensureCompanyAdmin(requester, member.companyId);
+
+    if (member.user.passwordHash) {
+      throw new ConflictException(
+        "このユーザーはすでにパスワードを設定済みです"
+      );
+    }
+
+    const invitation = await this.invitations.issue(
+      member.userId,
+      member.companyId,
+      member.role
+    );
+
+    return {
+      data: {
+        invitation: {
+          token: invitation.token,
+          url: this.invitations.buildInvitationUrl(invitation.token, origin),
+          expiresAt: invitation.expiresAt.toISOString(),
+        },
+      },
+    };
+  }
+
+  /**
+   * 呼び出し元が指定会社の ADMIN かを確認。
+   * 運営者（adminRole=true）は会社内ロールに関わらず通す。
+   */
+  private ensureCompanyAdmin(requester: JwtPayload, companyId: string) {
+    if (requester.adminRole) return;
+    if (requester.companyId !== companyId || requester.role !== "ADMIN") {
+      throw new ForbiddenException("この操作には管理者権限が必要です");
+    }
   }
 }

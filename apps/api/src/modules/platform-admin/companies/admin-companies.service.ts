@@ -1,11 +1,22 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import { randomBytes } from "crypto";
+import { PlanType, Role } from "@prisma/client";
 import { PrismaService } from "../../../database/prisma.service";
+import { InvitationsService } from "../../identity/invitations/invitations.service";
+import { CreateCompanyDto } from "./dto/create-company.dto";
 import { UpdateCompanyDto } from "./dto/update-company.dto";
 import { UpdateCompanyPlanDto } from "./dto/update-company-plan.dto";
 
 @Injectable()
 export class AdminCompaniesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly invitations: InvitationsService
+  ) {}
 
   /**
    * 全企業の一覧 + 今月の利用状況 + プラットフォーム全体のサマリー統計。
@@ -90,7 +101,28 @@ export class AdminCompaniesService {
       },
     });
     if (!company) throw new NotFoundException("企業が見つかりません");
-    return { data: company };
+
+    // メンバーは passwordHash を露出しない形に整形 + hasPassword フラグを付与
+    const { members, ...rest } = company;
+    return {
+      data: {
+        ...rest,
+        members: members.map((m) => ({
+          id: m.id,
+          role: m.role,
+          joinedAt: m.joinedAt,
+          isActive: m.isActive,
+          invitedAt: m.invitedAt,
+          hasPassword: !!m.user.passwordHash,
+          user: {
+            id: m.user.id,
+            name: m.user.name,
+            email: m.user.email,
+            avatarUrl: m.user.avatarUrl,
+          },
+        })),
+      },
+    };
   }
 
   /** 企業情報を更新（有効/無効切替・管理者メモ） */
@@ -123,16 +155,11 @@ export class AdminCompaniesService {
       throw new NotFoundException(`プラン ${dto.planType} が存在しません`);
     }
 
-    const trialEndsAt =
-      dto.planType === "TRIAL" && dto.trialEndsAt
-        ? new Date(dto.trialEndsAt)
-        : null;
-
     const subscriptionData = {
       planId: plan.id,
       monthlyPrice: dto.planType === "PAID" ? dto.monthlyPrice : 0,
       maxMinutesPerMonth: dto.maxMinutesPerMonth,
-      trialEndsAt,
+      trialEndsAt: dto.trialEndsAt ? new Date(dto.trialEndsAt) : null,
     };
 
     if (company.subscription) {
@@ -158,5 +185,135 @@ export class AdminCompaniesService {
       include: { plan: true },
     });
     return { data: created };
+  }
+
+  /**
+   * 企業 + 初代 ADMIN ユーザー + Subscription を一括作成し、招待 URL を返す。
+   * - 既存メールが別企業のメンバーになっている場合は 409（1ユーザー=1企業の方針）
+   * - slug は内部識別子としてランダム生成（UI からは指定しない）
+   */
+  async create(dto: CreateCompanyDto, origin: string | undefined) {
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: dto.adminEmail },
+      include: { companyMembers: true },
+    });
+    if (existingUser && existingUser.companyMembers.length > 0) {
+      throw new ConflictException(
+        "このメールアドレスは既に別企業のメンバーです"
+      );
+    }
+
+    const plan = await this.prisma.plan.findUnique({
+      where: { type: dto.planType },
+    });
+    if (!plan) {
+      throw new NotFoundException(`プラン ${dto.planType} が存在しません`);
+    }
+
+    const endsAt = dto.trialEndsAt ? new Date(dto.trialEndsAt) : null;
+
+    const now = new Date();
+    const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const slug = `co-${randomBytes(6).toString("hex")}`;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const company = await tx.company.create({
+        data: { name: dto.name, slug },
+      });
+
+      const user = existingUser
+        ? await tx.user.update({
+            where: { id: existingUser.id },
+            data: { name: dto.adminName },
+          })
+        : await tx.user.create({
+            data: { email: dto.adminEmail, name: dto.adminName },
+          });
+
+      await tx.companyMember.create({
+        data: {
+          companyId: company.id,
+          userId: user.id,
+          role: Role.ADMIN,
+          joinedAt: null,
+        },
+      });
+
+      await tx.subscription.create({
+        data: {
+          companyId: company.id,
+          planId: plan.id,
+          monthlyPrice: dto.planType === PlanType.PAID ? dto.monthlyPrice : 0,
+          maxMinutesPerMonth: dto.maxMinutesPerMonth,
+          trialEndsAt: endsAt,
+          currentPeriodStart: periodStart,
+          currentPeriodEnd: periodEnd,
+        },
+      });
+
+      return { company, user };
+    });
+
+    const invitation = await this.invitations.issue(
+      result.user.id,
+      result.company.id,
+      Role.ADMIN
+    );
+
+    return {
+      data: {
+        company: result.company,
+        admin: {
+          id: result.user.id,
+          email: result.user.email,
+          name: result.user.name,
+        },
+        invitation: {
+          token: invitation.token,
+          url: this.invitations.buildInvitationUrl(invitation.token, origin),
+          expiresAt: invitation.expiresAt.toISOString(),
+        },
+      },
+    };
+  }
+
+  /**
+   * 指定企業の指定メンバー宛に、招待リンクを再発行する。
+   * - すでにパスワード設定済み（passwordHash あり）なら 409
+   */
+  async resendInvitation(
+    companyId: string,
+    memberId: string,
+    origin: string | undefined
+  ) {
+    const member = await this.prisma.companyMember.findUnique({
+      where: { id: memberId },
+      include: { user: true },
+    });
+    if (!member || member.companyId !== companyId) {
+      throw new NotFoundException("メンバーが見つかりません");
+    }
+    if (member.user.passwordHash) {
+      throw new ConflictException(
+        "このユーザーはすでにパスワードを設定済みです"
+      );
+    }
+
+    const invitation = await this.invitations.issue(
+      member.userId,
+      companyId,
+      member.role
+    );
+
+    return {
+      data: {
+        invitation: {
+          token: invitation.token,
+          url: this.invitations.buildInvitationUrl(invitation.token, origin),
+          expiresAt: invitation.expiresAt.toISOString(),
+        },
+      },
+    };
   }
 }

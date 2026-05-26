@@ -10,6 +10,8 @@ import { RoleSelector } from "@/features/members/components/RoleSelector";
 import { InviteMemberModal } from "@/features/members/components/InviteMemberModal";
 import { membersApi, type Member, type MemberRole } from "@/entities/member/api/members-api";
 import { getCompanyId } from "@/shared/auth/company";
+import { getAuthToken } from "@/shared/auth/session";
+import { decodeJwtPayload } from "@/shared/auth/jwt";
 
 const ROLE_BADGE: Record<
   MemberRole,
@@ -26,6 +28,20 @@ export function MembersPage() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Member | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // JWT から自分のロール・メールを取り出して、編集系UIの表示制御に使う
+  // （サーバー側でも 403 を返すので、これはあくまで UX のためのガード）
+  const [currentRole, setCurrentRole] = useState<MemberRole | null>(null);
+  const [currentEmail, setCurrentEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = getAuthToken();
+    const payload = token ? decodeJwtPayload(token) : null;
+    setCurrentRole((payload?.role as MemberRole) ?? null);
+    setCurrentEmail((payload?.email as string) ?? null);
+  }, []);
+
+  const canManage = currentRole === "ADMIN";
 
   // メンバー一覧をバックエンドから取得
   const fetchMembers = useCallback(async () => {
@@ -85,10 +101,12 @@ export function MembersPage() {
           <p className="text-sm text-gray-500">
             メンバー: {loading ? "—" : `${members.length} 名`}
           </p>
-          <Button onClick={() => setShowInviteModal(true)}>
-            <UserPlus className="w-4 h-4 mr-2" />
-            メンバーを招待
-          </Button>
+          {canManage && (
+            <Button onClick={() => setShowInviteModal(true)}>
+              <UserPlus className="w-4 h-4 mr-2" />
+              メンバーを招待
+            </Button>
+          )}
         </div>
 
         {/* ローディング / エラー */}
@@ -130,6 +148,8 @@ export function MembersPage() {
                 )}
                 {members.map((member) => {
                   const badge = ROLE_BADGE[member.role];
+                  const isSelf =
+                    currentEmail !== null && member.email === currentEmail;
                   return (
                     <tr
                       key={member.id}
@@ -143,6 +163,9 @@ export function MembersPage() {
                           </div>
                           <span className="text-sm font-medium text-gray-900">
                             {member.name}
+                            {isSelf && (
+                              <span className="ml-1 text-xs text-gray-400">(自分)</span>
+                            )}
                           </span>
                         </div>
                       </td>
@@ -152,16 +175,18 @@ export function MembersPage() {
                         {member.email}
                       </td>
 
-                      {/* ロール（セレクトで変更可能） */}
+                      {/* ロール（ADMINだけ変更可、それ以外はバッジのみ） */}
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           <Badge variant={badge.variant}>{badge.label}</Badge>
-                          <RoleSelector
-                            role={member.role}
-                            onChange={(role) =>
-                              handleRoleChange(member.id, role)
-                            }
-                          />
+                          {canManage && (
+                            <RoleSelector
+                              role={member.role}
+                              onChange={(role) =>
+                                handleRoleChange(member.id, role)
+                              }
+                            />
+                          )}
                         </div>
                       </td>
 
@@ -179,16 +204,18 @@ export function MembersPage() {
                         </Badge>
                       </td>
 
-                      {/* 操作 */}
+                      {/* 操作（ADMINかつ自分以外のときだけ削除ボタン） */}
                       <td className="px-6 py-4">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setDeleteTarget(member)}
-                          title="メンバーを削除"
-                        >
-                          <Trash2 className="w-4 h-4 text-red-400" />
-                        </Button>
+                        {canManage && !isSelf && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setDeleteTarget(member)}
+                            title="メンバーを削除"
+                          >
+                            <Trash2 className="w-4 h-4 text-red-400" />
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   );

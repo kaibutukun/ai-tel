@@ -2,15 +2,17 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Building2, Phone, Clock, CreditCard } from "lucide-react";
+import { ArrowLeft, Building2, Phone, Clock, CreditCard, Users, RefreshCcw } from "lucide-react";
 import { Header } from "@/shared/layout/header";
 import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
+import { Badge } from "@/shared/ui/badge";
 import { Textarea } from "@/shared/ui/textarea";
 import { Input } from "@/shared/ui/input";
 import { Label } from "@/shared/ui/label";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
-import { adminApi, type AdminPlanType } from "@/features/admin/api/admin-api";
+import { InvitationLinkDialog } from "@/features/admin/components/InvitationLinkDialog";
+import { adminApi, type AdminInvitationInfo, type AdminPlanType } from "@/features/admin/api/admin-api";
 
 interface AdminCompanyDetailPageProps {
   id: string;
@@ -44,6 +46,11 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
   const [savingPlan, setSavingPlan] = useState(false);
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
   const [togglingActive, setTogglingActive] = useState(false);
+  const [resendingMemberId, setResendingMemberId] = useState<string | null>(null);
+  const [invitationResult, setInvitationResult] = useState<{
+    info: AdminInvitationInfo;
+    memberName: string;
+  } | null>(null);
 
   useEffect(() => {
     adminApi.getCompany(id)
@@ -97,6 +104,18 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
     }
   };
 
+  const handleResendInvitation = async (memberId: string, memberName: string) => {
+    setResendingMemberId(memberId);
+    try {
+      const res = await adminApi.resendInvitation(id, memberId);
+      setInvitationResult({ info: res.data.invitation, memberName });
+    } catch (e: any) {
+      alert(e?.message ?? "招待リンクの再発行に失敗しました");
+    } finally {
+      setResendingMemberId(null);
+    }
+  };
+
   const handleSavePlan = async () => {
     setSavingPlan(true);
     try {
@@ -104,10 +123,9 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
         planType: planForm.planType,
         monthlyPrice: planForm.planType === "PAID" ? planForm.monthlyPrice : 0,
         maxMinutesPerMonth: planForm.maxMinutesPerMonth,
-        trialEndsAt:
-          planForm.planType === "TRIAL" && planForm.trialEndsAt
-            ? new Date(`${planForm.trialEndsAt}T00:00:00`).toISOString()
-            : null,
+        trialEndsAt: planForm.trialEndsAt
+          ? new Date(`${planForm.trialEndsAt}T00:00:00`).toISOString()
+          : null,
       });
       setCompany((prev: any) => ({ ...prev, subscription: res.data }));
     } catch (e: any) {
@@ -253,19 +271,17 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
                 />
               </div>
 
-              {planForm.planType === "TRIAL" && (
-                <div>
-                  <Label htmlFor="trialEndsAt" className="text-sm">トライアル期限日</Label>
-                  <Input
-                    id="trialEndsAt"
-                    type="date"
-                    value={planForm.trialEndsAt}
-                    onChange={(e) =>
-                      setPlanForm((p) => ({ ...p, trialEndsAt: e.target.value }))
-                    }
-                  />
-                </div>
-              )}
+              <div>
+                <Label htmlFor="trialEndsAt" className="text-sm">期限日</Label>
+                <Input
+                  id="trialEndsAt"
+                  type="date"
+                  value={planForm.trialEndsAt}
+                  onChange={(e) =>
+                    setPlanForm((p) => ({ ...p, trialEndsAt: e.target.value }))
+                  }
+                />
+              </div>
             </div>
 
             <p className="text-xs text-gray-400">
@@ -275,6 +291,68 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
             <Button size="sm" className="w-full sm:w-auto" onClick={handleSavePlan} disabled={savingPlan}>
               {savingPlan ? "保存中..." : "プラン設定を保存"}
             </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5" />メンバー
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {!company.members || company.members.length === 0 ? (
+              <p className="px-6 py-8 text-center text-sm text-gray-400">メンバーがいません</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px]">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      {["名前", "メール", "ロール", "状態", ""].map((h) => (
+                        <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {company.members.map((m: any) => {
+                      const pending = !m.hasPassword;
+                      const resending = resendingMemberId === m.id;
+                      return (
+                        <tr key={m.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{m.user.name}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{m.user.email}</td>
+                          <td className="px-4 py-3">
+                            <Badge variant={m.role === "ADMIN" ? "secondary" : "outline"}>
+                              {m.role === "ADMIN" ? "管理者" : "一般"}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3">
+                            {pending ? (
+                              <Badge variant="warning">招待中</Badge>
+                            ) : (
+                              <Badge variant="success">参加済</Badge>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {pending && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleResendInvitation(m.id, m.user.name)}
+                                disabled={resending}
+                              >
+                                <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />
+                                {resending ? "発行中..." : "招待リンク再発行"}
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -293,6 +371,16 @@ export function AdminCompanyDetailPage({ id }: AdminCompanyDetailPageProps) {
           </CardContent>
         </Card>
       </main>
+
+      {invitationResult && (
+        <InvitationLinkDialog
+          title="招待リンクを再発行しました"
+          description={`${invitationResult.memberName} 宛の新しい招待URLです。古いリンクは無効になります。`}
+          url={invitationResult.info.url}
+          expiresAt={invitationResult.info.expiresAt}
+          onClose={() => setInvitationResult(null)}
+        />
+      )}
 
       {stopDialogOpen && (
         <ConfirmDialog

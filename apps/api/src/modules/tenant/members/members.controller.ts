@@ -7,21 +7,23 @@ import {
   Body,
   Param,
   Query,
+  Headers,
   BadRequestException,
 } from "@nestjs/common";
 import { MembersService } from "./members.service";
 import { CreateMemberDto } from "./dto/create-member.dto";
 import { UpdateMemberRoleDto } from "./dto/update-member-role.dto";
+import { CurrentUser } from "../../../common/decorators/current-user.decorator";
+import { JwtPayload } from "../../../common/types/authenticated-request";
 
 /**
  * メンバー管理 API
  *
- * TODO: auth 実装後は companyId をクエリパラメータではなく JWT から取得する
- *
- * GET    /api/members?companyId=xxx    - メンバー一覧
- * POST   /api/members                 - メンバー招待
- * PATCH  /api/members/:id/role        - ロール変更
- * DELETE /api/members/:id             - メンバー削除
+ * GET    /api/members?companyId=xxx           - メンバー一覧
+ * POST   /api/members                         - メンバー招待（招待URLを返す）※ADMIN のみ
+ * PATCH  /api/members/:id/role                - ロール変更 ※ADMIN のみ
+ * DELETE /api/members/:id                     - メンバー削除 ※ADMIN のみ・自分自身は不可
+ * POST   /api/members/:id/invitations         - 招待リンク再発行 ※ADMIN のみ
  */
 @Controller("members")
 export class MembersController {
@@ -36,20 +38,34 @@ export class MembersController {
   }
 
   @Post()
-  invite(@Body() dto: CreateMemberDto) {
-    return this.membersService.invite(dto);
+  invite(
+    @Body() dto: CreateMemberDto,
+    @CurrentUser() user: JwtPayload,
+    @Headers("origin") origin?: string
+  ) {
+    return this.membersService.invite(dto, user, origin);
   }
 
   @Patch(":id/role")
   updateRole(
     @Param("id") id: string,
-    @Body() dto: UpdateMemberRoleDto
+    @Body() dto: UpdateMemberRoleDto,
+    @CurrentUser() user: JwtPayload
   ) {
-    return this.membersService.updateRole(id, dto);
+    return this.membersService.updateRole(id, dto, user);
   }
 
   @Delete(":id")
-  remove(@Param("id") id: string) {
-    return this.membersService.remove(id);
+  remove(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.membersService.remove(id, user);
+  }
+
+  @Post(":id/invitations")
+  resendInvitation(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Headers("origin") origin?: string
+  ) {
+    return this.membersService.resendInvitation(id, user, origin);
   }
 }

@@ -25,6 +25,7 @@ model User {
   updatedAt    DateTime @updatedAt
 
   companyMembers CompanyMember[]
+  invitations    Invitation[]
   adminRole      Boolean         @default(false)
 }
 
@@ -46,6 +47,7 @@ model Company {
   updatedAt DateTime @updatedAt
 
   members              CompanyMember[]
+  invitations          Invitation[]
   phoneNumbers         PhoneNumber[]
   phoneNumberRequests  PhoneNumberRequest[]
   callFlows            CallFlow[]
@@ -78,6 +80,22 @@ model CompanyMember {
 enum Role {
   ADMIN
   GENERAL
+}
+
+// パスワード未設定ユーザー向けの招待トークン。
+// 招待 URL を発行して相手に渡し、相手がパスワードを設定するときに consume する。
+model Invitation {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  userId    String
+  companyId String
+  role      Role
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 }
 
 // ============================================================
